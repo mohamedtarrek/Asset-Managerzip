@@ -31,6 +31,7 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
     e.preventDefault();
     if (!walletAddress) { toast({ title: "Connect your wallet first", variant: "destructive" }); return; }
     if (!form.tokenName || !form.tokenSymbol) { toast({ title: "Token name and symbol required", variant: "destructive" }); return; }
+    if (!form.tokenImageUrl) { toast({ title: "Image URL required", description: "Pump.Fun requires an image for every token", variant: "destructive" }); return; }
     createBundle.mutate(
       { data: { ...form, ownerAddress: walletAddress } },
       {
@@ -39,7 +40,10 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
           setForm({ tokenName: "", tokenSymbol: "", tokenDescription: "", tokenImageUrl: "", walletCount: 10, solPerWallet: 0.1 });
           queryClient.invalidateQueries({ queryKey: getListWalletsQueryKey() });
         },
-        onError: () => toast({ title: "Launch failed", description: "Check your connection and try again", variant: "destructive" }),
+        onError: (err: unknown) => {
+          const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Launch failed — check wallet SOL balances and try again";
+          toast({ title: "Launch failed", description: message, variant: "destructive" });
+        },
       }
     );
   };
@@ -61,8 +65,18 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
         <Textarea id="tokenDescription" placeholder="Token description..." rows={2} value={form.tokenDescription} onChange={e => setForm(p => ({ ...p, tokenDescription: e.target.value }))} data-testid="input-token-description" />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="tokenImageUrl" className="text-xs text-muted-foreground">Image URL</Label>
-        <Input id="tokenImageUrl" placeholder="https://..." value={form.tokenImageUrl} onChange={e => setForm(p => ({ ...p, tokenImageUrl: e.target.value }))} data-testid="input-token-image-url" />
+        <Label htmlFor="tokenImageUrl" className="text-xs text-muted-foreground">
+          Image URL <span className="text-destructive">*</span>
+        </Label>
+        <Input
+          id="tokenImageUrl"
+          placeholder="https://i.imgur.com/... (required by Pump.Fun)"
+          value={form.tokenImageUrl}
+          onChange={e => setForm(p => ({ ...p, tokenImageUrl: e.target.value }))}
+          data-testid="input-token-image-url"
+          className={!form.tokenImageUrl ? "border-destructive/40 focus-visible:ring-destructive/30" : ""}
+        />
+        <p className="text-xs text-muted-foreground">Must be a publicly accessible image URL (PNG, JPG, GIF)</p>
       </div>
       <div className="space-y-2">
         <Label className="text-xs text-muted-foreground">Bundled Wallets</Label>
@@ -115,7 +129,10 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
       { data: { ownerAddress: walletAddress, sourceTokenAddress: ca, walletCount, solPerWallet } },
       {
         onSuccess: () => toast({ title: "VAMP launched!", description: "Token copy created on Pump.Fun" }),
-        onError: () => toast({ title: "VAMP failed", variant: "destructive" }),
+        onError: (err: unknown) => {
+          const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "VAMP failed — check wallet SOL balances and try again";
+          toast({ title: "VAMP failed", description: message, variant: "destructive" });
+        },
       }
     );
   };
