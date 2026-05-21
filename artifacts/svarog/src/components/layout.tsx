@@ -11,11 +11,12 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet-context";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useGetDashboardStats } from "@workspace/api-client-react";
 
@@ -36,19 +37,28 @@ function truncateAddress(addr: string) {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
-  const [connectOpen, setConnectOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
   const [inputAddress, setInputAddress] = useState("");
-  const { walletAddress, setWalletAddress } = useWallet();
+
+  const { walletAddress, isConnecting, hasPhantom, connect, disconnect, setManualAddress } = useWallet();
 
   const { data: stats } = useGetDashboardStats(
     { walletAddress: walletAddress ?? undefined },
     { query: { enabled: !!walletAddress } }
   );
 
-  const handleConnect = () => {
+  const handleConnectClick = async () => {
+    if (hasPhantom) {
+      await connect();
+    } else {
+      setManualOpen(true);
+    }
+  };
+
+  const handleManualConnect = () => {
     if (inputAddress.trim().length >= 32) {
-      setWalletAddress(inputAddress.trim());
-      setConnectOpen(false);
+      setManualAddress(inputAddress.trim());
+      setManualOpen(false);
       setInputAddress("");
     }
   };
@@ -85,12 +95,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <div
                   data-testid={`nav-${label.toLowerCase().replace(" ", "-")}`}
                   className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150 group",
-                    active
-                      ? "text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150",
+                    active ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                   )}
-                  style={active ? { background: "linear-gradient(90deg, hsl(270 100% 60% / 0.25), hsl(270 100% 60% / 0.05))", borderLeft: "2px solid hsl(270 100% 60%)" } : {}}
+                  style={active ? {
+                    background: "linear-gradient(90deg, hsl(270 100% 60% / 0.25), hsl(270 100% 60% / 0.05))",
+                    borderLeft: "2px solid hsl(270 100% 60%)"
+                  } : {}}
                 >
                   <Icon className={cn("w-4 h-4 shrink-0", active ? "text-primary" : "")} />
                   {!collapsed && (
@@ -112,7 +123,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
         </button>
 
-        {/* Bottom */}
+        {/* Bottom wallet info */}
         {!collapsed && (
           <div className="p-4 border-t border-border">
             {walletAddress ? (
@@ -120,14 +131,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <div className="text-xs text-muted-foreground">Connected</div>
                 <div className="text-xs font-mono text-primary truncate">{truncateAddress(walletAddress)}</div>
                 <button
-                  onClick={() => setWalletAddress(null)}
+                  onClick={disconnect}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
                 >
                   <LogOut className="w-3 h-3" /> Disconnect
                 </button>
               </div>
             ) : (
-              <Button size="sm" className="w-full text-xs" onClick={() => setConnectOpen(true)}>
+              <Button size="sm" className="w-full text-xs" onClick={handleConnectClick} disabled={isConnecting}>
+                {isConnecting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
                 Connect Wallet
               </Button>
             )}
@@ -145,7 +157,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {stats && (
+            {stats && walletAddress && (
               <div className="hidden md:flex items-center gap-4 text-sm">
                 <span className="text-muted-foreground">Balance:</span>
                 <span className="font-mono text-foreground font-semibold">
@@ -159,15 +171,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             {walletAddress ? (
               <div
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card text-sm font-mono cursor-pointer hover:bg-accent transition-colors"
-                onClick={() => setConnectOpen(true)}
+                onClick={disconnect}
                 data-testid="wallet-address-display"
+                title="Click to disconnect"
               >
                 <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
                 {truncateAddress(walletAddress)}
               </div>
             ) : (
-              <Button size="sm" onClick={() => setConnectOpen(true)} data-testid="connect-wallet-button">
-                Connect Wallet
+              <Button
+                size="sm"
+                onClick={handleConnectClick}
+                disabled={isConnecting}
+                data-testid="connect-wallet-button"
+              >
+                {isConnecting
+                  ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Connecting...</>
+                  : hasPhantom
+                    ? "Connect Phantom"
+                    : "Connect Wallet"
+                }
               </Button>
             )}
           </div>
@@ -179,28 +202,52 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
 
-      {/* Connect Wallet Dialog */}
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
+      {/* Manual address fallback dialog (shown only when Phantom is not installed) */}
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Connect Wallet</DialogTitle>
+            <DialogDescription>
+              Phantom wallet extension not detected. Install Phantom for one-click connect, or enter your Solana address manually.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">
-              Enter your Solana wallet address to connect. This will be used as your identity on the platform.
-            </p>
+            <a
+              href="https://phantom.app"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between p-3 rounded-lg border border-border bg-card/50 hover:bg-accent transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-xs font-bold">P</div>
+                <div>
+                  <p className="text-sm font-medium">Install Phantom</p>
+                  <p className="text-xs text-muted-foreground">phantom.app</p>
+                </div>
+              </div>
+              <span className="text-xs text-muted-foreground">→</span>
+            </a>
+            <div className="relative flex items-center gap-2">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted-foreground px-2">or enter manually</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
             <Input
               placeholder="Your Solana wallet address..."
               value={inputAddress}
               onChange={(e) => setInputAddress(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleConnect()}
+              onKeyDown={(e) => e.key === "Enter" && handleManualConnect()}
               data-testid="input-wallet-address"
               className="font-mono text-sm"
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConnectOpen(false)}>Cancel</Button>
-            <Button onClick={handleConnect} disabled={inputAddress.trim().length < 32} data-testid="button-connect-confirm">
+            <Button variant="outline" onClick={() => setManualOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleManualConnect}
+              disabled={inputAddress.trim().length < 32}
+              data-testid="button-connect-confirm"
+            >
               Connect
             </Button>
           </DialogFooter>
