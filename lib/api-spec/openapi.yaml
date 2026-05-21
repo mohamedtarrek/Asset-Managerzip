@@ -1,22 +1,31 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Svarog - Solana Token Launcher Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: wallets
+    description: Wallet management
+  - name: bundles
+    description: Token bundle management
+  - name: bots
+    description: Bump bot management
+  - name: tokens
+    description: Token operations
+  - name: dashboard
+    description: Dashboard stats and activity
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +33,959 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # Dashboard
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Get dashboard overview stats
+      parameters:
+        - name: walletAddress
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /dashboard/activity:
+    get:
+      operationId: getDashboardActivity
+      tags: [dashboard]
+      summary: Get recent activity feed
+      parameters:
+        - name: walletAddress
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityEvent"
+
+  # Wallets
+  /wallets:
+    get:
+      operationId: listWallets
+      tags: [wallets]
+      summary: List all stored wallets
+      parameters:
+        - name: ownerAddress
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: group
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of wallets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Wallet"
+    post:
+      operationId: createWallet
+      tags: [wallets]
+      summary: Generate a new wallet keypair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletInput"
+      responses:
+        "201":
+          description: Created wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+
+  /wallets/import:
+    post:
+      operationId: importWallet
+      tags: [wallets]
+      summary: Import wallet by private key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletImport"
+      responses:
+        "201":
+          description: Imported wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+        "400":
+          description: Invalid private key
+
+  /wallets/generate-bulk:
+    post:
+      operationId: generateBulkWallets
+      tags: [wallets]
+      summary: Generate multiple wallets at once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkWalletInput"
+      responses:
+        "201":
+          description: Generated wallets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Wallet"
+
+  /wallets/{id}:
+    get:
+      operationId: getWallet
+      tags: [wallets]
+      summary: Get a specific wallet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateWallet
+      tags: [wallets]
+      summary: Update wallet metadata
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalletUpdate"
+      responses:
+        "200":
+          description: Updated wallet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+    delete:
+      operationId: deleteWallet
+      tags: [wallets]
+      summary: Delete a wallet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /wallets/{id}/balance:
+    get:
+      operationId: getWalletBalance
+      tags: [wallets]
+      summary: Get wallet SOL balance
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletBalance"
+
+  /wallets/groups:
+    get:
+      operationId: listWalletGroups
+      tags: [wallets]
+      summary: List all wallet groups
+      parameters:
+        - name: ownerAddress
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WalletGroup"
+
+  # Bundles
+  /bundles:
+    get:
+      operationId: listBundles
+      tags: [bundles]
+      summary: List all bundles
+      parameters:
+        - name: ownerAddress
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of bundles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bundle"
+    post:
+      operationId: createBundle
+      tags: [bundles]
+      summary: Create and launch a new token bundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BundleInput"
+      responses:
+        "201":
+          description: Created bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bundle"
+
+  /bundles/vamp:
+    post:
+      operationId: createVampBundle
+      tags: [bundles]
+      summary: VAMP - copy existing token metadata and relaunch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VampInput"
+      responses:
+        "201":
+          description: Created VAMP bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bundle"
+
+  /bundles/stats:
+    get:
+      operationId: getBundleStats
+      tags: [bundles]
+      summary: Get bundle performance stats
+      parameters:
+        - name: ownerAddress
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Bundle stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleStats"
+
+  /bundles/{id}:
+    get:
+      operationId: getBundle
+      tags: [bundles]
+      summary: Get a specific bundle
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bundle"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteBundle
+      tags: [bundles]
+      summary: Delete a bundle
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # Bump Bots
+  /bots:
+    get:
+      operationId: listBots
+      tags: [bots]
+      summary: List all bump bots
+      parameters:
+        - name: ownerAddress
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of bots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BumpBot"
+    post:
+      operationId: createBot
+      tags: [bots]
+      summary: Create a new bump bot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotInput"
+      responses:
+        "201":
+          description: Created bot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumpBot"
+
+  /bots/{id}:
+    get:
+      operationId: getBot
+      tags: [bots]
+      summary: Get a specific bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumpBot"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteBot
+      tags: [bots]
+      summary: Delete a bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /bots/{id}/start:
+    post:
+      operationId: startBot
+      tags: [bots]
+      summary: Start a bump bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumpBot"
+
+  /bots/{id}/stop:
+    post:
+      operationId: stopBot
+      tags: [bots]
+      summary: Stop a bump bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumpBot"
+
+  /bots/{id}/pause:
+    post:
+      operationId: pauseBot
+      tags: [bots]
+      summary: Pause a bump bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumpBot"
+
+  /bots/estimate:
+    post:
+      operationId: estimateBotCost
+      tags: [bots]
+      summary: Estimate bump bot cost and performance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotEstimateInput"
+      responses:
+        "200":
+          description: Bot cost estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotEstimate"
+
+  # Tokens
+  /tokens/metadata:
+    get:
+      operationId: getTokenMetadata
+      tags: [tokens]
+      summary: Fetch token metadata from Pump.Fun by contract address
+      parameters:
+        - name: ca
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenMetadata"
+        "404":
+          description: Token not found
+
+  # Settings
+  /settings:
+    get:
+      operationId: getSettings
+      tags: [dashboard]
+      summary: Get user settings
+      parameters:
+        - name: walletAddress
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+    patch:
+      operationId: updateSettings
+      tags: [dashboard]
+      summary: Update user settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsUpdate"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    # Dashboard
+    DashboardStats:
+      type: object
+      required: [earningsToday, earningsLast30Days, bundlesLaunched, totalBalanceSol, totalBalanceUsd, pnl]
+      properties:
+        earningsToday:
+          type: number
+        earningsLast30Days:
+          type: number
+        bundlesLaunched:
+          type: integer
+        totalBalanceSol:
+          type: number
+        totalBalanceUsd:
+          type: number
+        pnl:
+          type: number
+        activeBots:
+          type: integer
+        totalWallets:
+          type: integer
+
+    ActivityEvent:
+      type: object
+      required: [id, type, description, timestamp]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        description:
+          type: string
+        timestamp:
+          type: string
+        tokenName:
+          type: ["string", "null"]
+        tokenSymbol:
+          type: ["string", "null"]
+        amount:
+          type: ["number", "null"]
+        txHash:
+          type: ["string", "null"]
+        walletAddress:
+          type: ["string", "null"]
+
+    # Wallets
+    Wallet:
+      type: object
+      required: [id, publicKey, ownerAddress, label, group, createdAt]
+      properties:
+        id:
+          type: integer
+        publicKey:
+          type: string
+        ownerAddress:
+          type: string
+        label:
+          type: ["string", "null"]
+        group:
+          type: ["string", "null"]
+        balanceSol:
+          type: ["number", "null"]
+        balanceUsd:
+          type: ["number", "null"]
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    WalletInput:
+      type: object
+      required: [ownerAddress]
+      properties:
+        ownerAddress:
+          type: string
+        label:
+          type: string
+        group:
+          type: string
+
+    WalletImport:
+      type: object
+      required: [ownerAddress, privateKey]
+      properties:
+        ownerAddress:
+          type: string
+        privateKey:
+          type: string
+        label:
+          type: string
+        group:
+          type: string
+
+    BulkWalletInput:
+      type: object
+      required: [ownerAddress, count]
+      properties:
+        ownerAddress:
+          type: string
+        count:
+          type: integer
+        group:
+          type: string
+
+    WalletUpdate:
+      type: object
+      properties:
+        label:
+          type: string
+        group:
+          type: string
+        isActive:
+          type: boolean
+
+    WalletBalance:
+      type: object
+      required: [publicKey, balanceSol]
+      properties:
+        publicKey:
+          type: string
+        balanceSol:
+          type: number
+        balanceUsd:
+          type: ["number", "null"]
+
+    WalletGroup:
+      type: object
+      required: [name, count]
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+        totalBalanceSol:
+          type: ["number", "null"]
+
+    # Bundles
+    Bundle:
+      type: object
+      required: [id, ownerAddress, tokenName, tokenSymbol, tokenAddress, walletCount, status, launchType, createdAt]
+      properties:
+        id:
+          type: integer
+        ownerAddress:
+          type: string
+        tokenName:
+          type: string
+        tokenSymbol:
+          type: string
+        tokenAddress:
+          type: ["string", "null"]
+        tokenDescription:
+          type: ["string", "null"]
+        tokenImageUrl:
+          type: ["string", "null"]
+        walletCount:
+          type: integer
+        solPerWallet:
+          type: ["number", "null"]
+        totalSolSpent:
+          type: ["number", "null"]
+        status:
+          type: string
+        launchType:
+          type: string
+        performanceUsd:
+          type: ["number", "null"]
+        performanceSol:
+          type: ["number", "null"]
+        txHash:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    BundleInput:
+      type: object
+      required: [ownerAddress, tokenName, tokenSymbol, walletCount]
+      properties:
+        ownerAddress:
+          type: string
+        tokenName:
+          type: string
+        tokenSymbol:
+          type: string
+        tokenDescription:
+          type: string
+        tokenImageUrl:
+          type: string
+        walletCount:
+          type: integer
+        solPerWallet:
+          type: number
+        walletIds:
+          type: array
+          items:
+            type: integer
+
+    VampInput:
+      type: object
+      required: [ownerAddress, sourceTokenAddress, walletCount]
+      properties:
+        ownerAddress:
+          type: string
+        sourceTokenAddress:
+          type: string
+        walletCount:
+          type: integer
+        solPerWallet:
+          type: number
+
+    BundleStats:
+      type: object
+      required: [totalLaunches, bestLaunchUsd, totalSolSpent, successRate]
+      properties:
+        totalLaunches:
+          type: integer
+        bestLaunchUsd:
+          type: number
+        bestLaunchSol:
+          type: number
+        totalSolSpent:
+          type: number
+        successRate:
+          type: number
+        avgWalletsPerBundle:
+          type: number
+
+    # Bump Bots
+    BumpBot:
+      type: object
+      required: [id, ownerAddress, tokenAddress, walletCount, speed, budgetSol, status, createdAt]
+      properties:
+        id:
+          type: integer
+        ownerAddress:
+          type: string
+        tokenAddress:
+          type: string
+        tokenName:
+          type: ["string", "null"]
+        walletCount:
+          type: integer
+        speed:
+          type: string
+        budgetSol:
+          type: number
+        solPerWallet:
+          type: ["number", "null"]
+        bumpSize:
+          type: ["number", "null"]
+        bumpsPerHour:
+          type: ["integer", "null"]
+        costPerBump:
+          type: ["number", "null"]
+        totalBumps:
+          type: ["integer", "null"]
+        bumpsExecuted:
+          type: ["integer", "null"]
+        estimatedDurationHours:
+          type: ["number", "null"]
+        status:
+          type: string
+        startedAt:
+          type: ["string", "null"]
+        stoppedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    BotInput:
+      type: object
+      required: [ownerAddress, tokenAddress, walletCount, speed, budgetSol]
+      properties:
+        ownerAddress:
+          type: string
+        tokenAddress:
+          type: string
+        walletCount:
+          type: integer
+        speed:
+          type: string
+        budgetSol:
+          type: number
+
+    BotEstimateInput:
+      type: object
+      required: [walletCount, speed, budgetSol]
+      properties:
+        walletCount:
+          type: integer
+        speed:
+          type: string
+        budgetSol:
+          type: number
+
+    BotEstimate:
+      type: object
+      required: [bumpSize, bumpsPerHour, costPerBump, totalBumps, estimatedDurationHours, solPerWallet]
+      properties:
+        bumpSize:
+          type: number
+        bumpsPerHour:
+          type: integer
+        costPerBump:
+          type: number
+        totalBumps:
+          type: integer
+        estimatedDurationHours:
+          type: number
+        solPerWallet:
+          type: number
+        isValid:
+          type: boolean
+        validationMessage:
+          type: ["string", "null"]
+
+    # Token
+    TokenMetadata:
+      type: object
+      required: [address, name, symbol]
+      properties:
+        address:
+          type: string
+        name:
+          type: string
+        symbol:
+          type: string
+        description:
+          type: ["string", "null"]
+        imageUrl:
+          type: ["string", "null"]
+        decimals:
+          type: ["integer", "null"]
+        supply:
+          type: ["number", "null"]
+
+    # Settings
+    UserSettings:
+      type: object
+      required: [walletAddress]
+      properties:
+        walletAddress:
+          type: string
+        defaultWalletCount:
+          type: integer
+        defaultSolPerWallet:
+          type: number
+        autoApprove:
+          type: boolean
+        darkMode:
+          type: boolean
+        notificationsEnabled:
+          type: boolean
+        rpcEndpoint:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    SettingsUpdate:
+      type: object
+      properties:
+        walletAddress:
+          type: string
+        defaultWalletCount:
+          type: integer
+        defaultSolPerWallet:
+          type: number
+        autoApprove:
+          type: boolean
+        darkMode:
+          type: boolean
+        notificationsEnabled:
+          type: boolean
+        rpcEndpoint:
+          type: string

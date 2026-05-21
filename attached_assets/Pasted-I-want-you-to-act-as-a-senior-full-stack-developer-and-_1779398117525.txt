@@ -1,0 +1,114 @@
+I want you to act as a senior full-stack developer and UI/UX designer. Build a complete, production-ready web application similar to "Svarog" – a platform for launching and managing meme tokens on the Solana blockchain (specifically for Pump.Fun).
+
+The website must include ALL the features and pages shown in the attached screenshots, plus the logic behind them. Use modern technologies: React (Next.js) for frontend, Node.js + Express for backend, and Solana Web3.js for blockchain interaction. Use Tailwind CSS for styling.
+
+Here are the required features in detail:
+
+== 1. USER AUTHENTICATION & WALLET CONNECTION ==
+- Users can connect their Phantom wallet (Solana).
+- Once connected, the wallet address becomes the user's primary identity.
+- The connected wallet is used for authentication and all withdrawals.
+- Show the connected wallet address (truncated, e.g., DTJ5hV...fVTQJH).
+
+== 2. DASHBOARD PAGE ==
+- Display earnings overview (last 30 days and today). Initially $0.00.
+- Show "Bundles Launched" counter.
+- Show "Total Balance" from the main wallet (in SOL and USD).
+- Show a "Recent Activity" calendar or timeline.
+- Display quick stats like PNL, and placeholder prices for BTC, SOL, ETH, etc.
+- Include a "Withdrawal" button.
+
+== 3. TOKEN LAUNCH PAGE (BUNDLING) ==
+Users must be able to create a new token with bundled wallets:
+
+- "New Bundle": Create and launch a new token on Pump.Fun with multiple bundled wallets that buy simultaneously at launch.
+- "VAMP": Copy any existing token's metadata (name, image, description, symbol) and launch a duplicate token.
+- "CTO" (Coming Soon): Take over an existing token using user's own wallets (placeholder for now).
+- When launching, the user should specify:
+  - Token name, symbol, description, image URL.
+  - Number of bundled wallets (e.g., 5, 10, 20).
+  - Amount of SOL to distribute to each bundled wallet.
+  - The bundler will execute all buy transactions at the same block to simulate high demand.
+
+== 4. WALLET STORAGE & MANAGEMENT ==
+- Users can store up to 200 wallets.
+- Ability to generate new wallets (keypairs) automatically.
+- Ability to import existing wallets via private key.
+- Organize wallets into groups.
+- Show storage usage (e.g., 0/200 used).
+- Bulk select/deselect wallets.
+- Each wallet must show its public key and balance.
+
+== 5. BUNDLES MANAGEMENT PAGE ==
+- List all created bundles.
+- Show "Total Launches" and "Best Launch" performance (in USD/SOL).
+- Search bar to filter bundles.
+- If no bundles exist, show "No bundles found" and a "Create your first bundle" button.
+- Each bundle should show: token address, number of wallets used, launch time, and current status.
+
+== 6. BUMP BOT PAGE ==
+- Allow users to create automated "bump bots" to keep their token visible on Pump.Fun.
+- Inputs:
+  - Token CA (Contract Address)
+  - Choose from existing bundle or enter custom CA.
+  - Number of wallets (5, 10, 15, 20, 25).
+  - Bump Speed (Gentle: 90-150s, Moderate: 20-40s, Fast: 10-20s).
+  - Total Budget in SOL (minimum 0.2 SOL for 10 wallets, per wallet: 0.05 SOL).
+- Show estimate:
+  - Bump size (e.g., 0.0030 SOL)
+  - Bumps per hour (e.g., 120)
+  - Cost per bump (e.g., 0.00017 SOL)
+  - Total bumps
+  - Estimated duration (e.g., 23.0 hours)
+- Button to "Create Bump Bot".
+- Show list of "Active Bots" with status and controls (stop/pause).
+
+== 7. SETTINGS PAGE ==
+- Fine-tune default launch preferences.
+- Manage reusable presets.
+- Automate wallet behavior (e.g., auto-approve transactions).
+- Account settings (change wallet, etc.).
+- General settings (UI theme, notifications).
+- Quick Actions (repeat last launch, etc.).
+- Activity log.
+
+== 8. UI/UX REQUIREMENTS ==
+- Dark theme (as shown in screenshots).
+- Sidebar navigation: Dashboard, Token Launch, Bundles, Wallets, Bump Bot, Settings.
+- Top bar showing connected wallet and total balance.
+- Buttons styled with gradients or neon accents.
+- Responsive design (works on desktop and tablet).
+- Use loading states, error handling, and toast notifications.
+- All blockchain transactions must be signed by the user's Phantom wallet.
+
+== 9. TECHNICAL BACKEND REQUIREMENTS ==
+- Simulate or integrate with Pump.Fun's actual contract (or use a mock for development).
+- The bundler logic: send multiple buy transactions from different wallets in one atomic bundle or same block.
+- Store user data (wallets, bundles, bots) in a database (PostgreSQL or MongoDB).
+- Encrypt stored private keys (never expose raw keys to frontend).
+- Provide API endpoints for:
+  - Wallet generation and import.
+  - Token creation + bundling.
+  - Bump bot scheduling (use node-cron or Bull queue).
+  - Fetching wallet balances and transaction history.
+
+== 10. EXAMPLE PAGES LAYOUT ==
+Copy the layout exactly from the screenshots:
+- Dashboard with earnings cards, calendar, and coin prices list.
+- Token Launch with three cards (New Bundle, VAMP, CTO).
+- Wallets page with storage bar, generate/import buttons, and wallet list.
+- Bundles page with search and grid/list view.
+- Bump Bot page with form fields, estimate card, and active bots section.
+- Settings page with tabs (Account, General, Quick Actions, Activity).
+
+== FINAL INSTRUCTION ==
+Generate the full codebase structure, including:
+- All frontend components (React/Next.js).
+- All backend routes and controllers.
+- Database schema (Prisma or Mongoose models).
+- Solana interaction scripts (using @solana/web3.js).
+- Instructions for environment variables (RPC endpoint, private keys, etc.).
+
+Make sure the platform is fully functional for DEMO purposes – meaning the bundling and bump bot should actually work on Solana devnet or mainnet (with user approval). Include clear comments and a README file on how to run the project.
+
+Do not skip any feature. The final output should be ready to deploy.
