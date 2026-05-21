@@ -182,6 +182,20 @@ export const GetWalletBalanceResponse = zod.object({
 
 
 /**
+ * @summary Get decrypted private key for a wallet
+ */
+export const GetWalletPrivateKeyParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetWalletPrivateKeyResponse = zod.object({
+  "id": zod.number(),
+  "publicKey": zod.string(),
+  "privateKeyBase58": zod.string()
+})
+
+
+/**
  * @summary List all wallet groups
  */
 export const ListWalletGroupsQueryParams = zod.object({

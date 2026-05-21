@@ -242,6 +242,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/WalletBalance"
 
+  /wallets/{id}/private-key:
+    get:
+      operationId: getWalletPrivateKey
+      tags: [wallets]
+      summary: Get decrypted private key for a wallet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Decrypted private key (base58)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletPrivateKey"
+        "404":
+          description: Wallet not found
+
   /wallets/groups:
     get:
       operationId: listWalletGroups
@@ -732,6 +753,17 @@ components:
           type: number
         balanceUsd:
           type: ["number", "null"]
+
+    WalletPrivateKey:
+      type: object
+      required: [id, publicKey, privateKeyBase58]
+      properties:
+        id:
+          type: integer
+        publicKey:
+          type: string
+        privateKeyBase58:
+          type: string
 
     WalletGroup:
       type: object

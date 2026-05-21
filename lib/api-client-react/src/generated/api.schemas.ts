@@ -86,6 +86,12 @@ export interface WalletBalance {
   balanceUsd?: number | null;
 }
 
+export interface WalletPrivateKey {
+  id: number;
+  publicKey: string;
+  privateKeyBase58: string;
+}
+
 export interface WalletGroup {
   name: string;
   count: number;

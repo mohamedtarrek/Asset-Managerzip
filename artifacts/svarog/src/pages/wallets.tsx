@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Plus, Download, Trash2, Wallet, CheckSquare, Square, Loader2, RefreshCw } from "lucide-react";
+import { Plus, Download, Trash2, Wallet, CheckSquare, Square, Loader2, RefreshCw, Eye, EyeOff, Copy } from "lucide-react";
 import { useWallet } from "@/lib/wallet-context";
-import { useListWallets, useCreateWallet, useImportWallet, useGenerateBulkWallets, useDeleteWallet, useListWalletGroups, getListWalletsQueryKey, getListWalletGroupsQueryKey } from "@workspace/api-client-react";
+import { useListWallets, useCreateWallet, useImportWallet, useGenerateBulkWallets, useDeleteWallet, useListWalletGroups, useGetWalletPrivateKey, getGetWalletPrivateKeyQueryKey, getListWalletsQueryKey, getListWalletGroupsQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,34 +17,85 @@ import { useQueryClient } from "@tanstack/react-query";
 
 const MAX_WALLETS = 200;
 
+function PrivateKeyReveal({ walletId }: { walletId: number }) {
+  const [visible, setVisible] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const { data, isLoading } = useGetWalletPrivateKey(walletId, {
+    query: { enabled: visible, staleTime: Infinity, queryKey: getGetWalletPrivateKeyQueryKey(walletId) },
+  });
+
+  const handleCopy = () => {
+    if (data?.privateKeyBase58) {
+      navigator.clipboard.writeText(data.privateKeyBase58);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <div className="flex-1 min-w-0 font-mono text-xs bg-muted/30 rounded px-2 py-0.5 border border-border/50">
+        {!visible ? (
+          <span className="text-muted-foreground tracking-widest select-none">••••••••••••••••••••••••••••••••••••••••••</span>
+        ) : isLoading ? (
+          <span className="text-muted-foreground">Loading...</span>
+        ) : (
+          <span className="text-yellow-400/90 break-all">{data?.privateKeyBase58}</span>
+        )}
+      </div>
+      <button
+        onClick={() => setVisible(v => !v)}
+        className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+        title={visible ? "Hide private key" : "Show private key"}
+      >
+        {visible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+      </button>
+      {visible && data?.privateKeyBase58 && (
+        <button
+          onClick={handleCopy}
+          className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+          title="Copy private key"
+        >
+          <Copy className={cn("w-3.5 h-3.5", copied && "text-green-400")} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function WalletRow({ wallet, selected, onSelect, onDelete }: {
   wallet: { id: number; publicKey: string; label?: string | null; group?: string | null; balanceSol?: number | null; balanceUsd?: number | null; isActive?: boolean; };
   selected: boolean; onSelect: () => void; onDelete: () => void;
 }) {
   const short = `${wallet.publicKey.slice(0, 6)}...${wallet.publicKey.slice(-8)}`;
   return (
-    <div className={cn("flex items-center gap-3 p-3 border rounded-lg transition-all", selected ? "border-primary bg-primary/5" : "border-border bg-card/30 hover:bg-card/60")} data-testid={`wallet-row-${wallet.id}`}>
-      <button onClick={onSelect} className="shrink-0 text-muted-foreground hover:text-primary transition-colors" data-testid={`checkbox-wallet-${wallet.id}`}>
-        {selected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
-      </button>
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "hsl(270 100% 60% / 0.12)" }}>
-        <Wallet className="w-4 h-4" style={{ color: "hsl(270 100% 65%)" }} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-xs font-mono text-foreground">{short}</p>
-          {wallet.label && <span className="text-xs text-muted-foreground">· {wallet.label}</span>}
-          {wallet.group && <Badge variant="outline" className="text-xs px-1.5 py-0">{wallet.group}</Badge>}
+    <div className={cn("p-3 border rounded-lg transition-all", selected ? "border-primary bg-primary/5" : "border-border bg-card/30 hover:bg-card/60")} data-testid={`wallet-row-${wallet.id}`}>
+      <div className="flex items-center gap-3">
+        <button onClick={onSelect} className="shrink-0 text-muted-foreground hover:text-primary transition-colors" data-testid={`checkbox-wallet-${wallet.id}`}>
+          {selected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
+        </button>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "hsl(270 100% 60% / 0.12)" }}>
+          <Wallet className="w-4 h-4" style={{ color: "hsl(270 100% 65%)" }} />
         </div>
-        <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{wallet.publicKey}</p>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-mono text-foreground">{short}</p>
+            {wallet.label && <span className="text-xs text-muted-foreground">· {wallet.label}</span>}
+            {wallet.group && <Badge variant="outline" className="text-xs px-1.5 py-0">{wallet.group}</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{wallet.publicKey}</p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-sm font-mono font-semibold">{(wallet.balanceSol ?? 0).toFixed(4)} <span className="text-xs text-muted-foreground">SOL</span></p>
+          {wallet.balanceUsd != null && <p className="text-xs text-muted-foreground">${wallet.balanceUsd.toFixed(2)}</p>}
+        </div>
+        <button onClick={onDelete} className="text-muted-foreground hover:text-destructive transition-colors shrink-0" data-testid={`button-delete-wallet-${wallet.id}`}>
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
-      <div className="text-right shrink-0">
-        <p className="text-sm font-mono font-semibold">{(wallet.balanceSol ?? 0).toFixed(4)} <span className="text-xs text-muted-foreground">SOL</span></p>
-        {wallet.balanceUsd != null && <p className="text-xs text-muted-foreground">${wallet.balanceUsd.toFixed(2)}</p>}
+      <div className="ml-[52px]">
+        <PrivateKeyReveal walletId={wallet.id} />
       </div>
-      <button onClick={onDelete} className="text-muted-foreground hover:text-destructive transition-colors shrink-0" data-testid={`button-delete-wallet-${wallet.id}`}>
-        <Trash2 className="w-4 h-4" />
-      </button>
     </div>
   );
 }

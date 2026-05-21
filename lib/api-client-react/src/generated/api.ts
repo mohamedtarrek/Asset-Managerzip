@@ -49,6 +49,7 @@ import type {
   WalletGroup,
   WalletImport,
   WalletInput,
+  WalletPrivateKey,
   WalletUpdate
 } from './api.schemas';
 
@@ -890,6 +891,83 @@ export function useGetWalletBalance<TData = Awaited<ReturnType<typeof getWalletB
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetWalletBalanceQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetWalletPrivateKeyUrl = (id: number,) => {
+
+
+
+
+  return `/api/wallets/${id}/private-key`
+}
+
+/**
+ * @summary Get decrypted private key for a wallet
+ */
+export const getWalletPrivateKey = async (id: number, options?: RequestInit): Promise<WalletPrivateKey> => {
+
+  return customFetch<WalletPrivateKey>(getGetWalletPrivateKeyUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWalletPrivateKeyQueryKey = (id: number,) => {
+    return [
+    `/api/wallets/${id}/private-key`
+    ] as const;
+    }
+
+
+export const getGetWalletPrivateKeyQueryOptions = <TData = Awaited<ReturnType<typeof getWalletPrivateKey>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWalletPrivateKey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWalletPrivateKeyQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWalletPrivateKey>>> = ({ signal }) => getWalletPrivateKey(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWalletPrivateKey>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWalletPrivateKeyQueryResult = NonNullable<Awaited<ReturnType<typeof getWalletPrivateKey>>>
+export type GetWalletPrivateKeyQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get decrypted private key for a wallet
+ */
+
+export function useGetWalletPrivateKey<TData = Awaited<ReturnType<typeof getWalletPrivateKey>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWalletPrivateKey>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWalletPrivateKeyQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

@@ -35,4 +35,5 @@ export * from './walletBalance';
 export * from './walletGroup';
 export * from './walletImport';
 export * from './walletInput';
+export * from './walletPrivateKey';
 export * from './walletUpdate';

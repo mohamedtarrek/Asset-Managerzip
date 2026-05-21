@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
 import { db, walletsTable } from "@workspace/db";
-import { generateKeypair, keypairFromEncrypted, getSolBalance } from "../lib/solana.js";
+import { generateKeypair, keypairFromEncrypted, getSolBalance, decryptSecretKey } from "../lib/solana.js";
 import {
   ListWalletsQueryParams,
   CreateWalletBody,
@@ -163,6 +163,22 @@ router.delete("/wallets/:id", async (req, res): Promise<void> => {
   const [wallet] = await db.delete(walletsTable).where(eq(walletsTable.id, params.data.id)).returning();
   if (!wallet) { res.status(404).json({ error: "Wallet not found" }); return; }
   res.sendStatus(204);
+});
+
+// GET /wallets/:id/private-key — return decrypted base58 private key
+router.get("/wallets/:id/private-key", async (req, res): Promise<void> => {
+  const params = GetWalletParams.safeParse(req.params);
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
+
+  const [wallet] = await db.select().from(walletsTable).where(eq(walletsTable.id, params.data.id));
+  if (!wallet) { res.status(404).json({ error: "Wallet not found" }); return; }
+
+  try {
+    const privateKeyBase58 = decryptSecretKey(wallet.encryptedPrivateKey);
+    res.json({ id: wallet.id, publicKey: wallet.publicKey, privateKeyBase58 });
+  } catch {
+    res.status(500).json({ error: "Failed to decrypt private key" });
+  }
 });
 
 // GET /wallets/:id/balance — fetch real on-chain SOL balance

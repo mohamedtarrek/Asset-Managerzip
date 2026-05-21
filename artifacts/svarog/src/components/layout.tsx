@@ -18,7 +18,7 @@ import { useWallet } from "@/lib/wallet-context";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useGetDashboardStats } from "@workspace/api-client-react";
+import { useGetDashboardStats, getGetDashboardStatsQueryKey } from "@workspace/api-client-react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -44,7 +44,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const { data: stats } = useGetDashboardStats(
     { walletAddress: walletAddress ?? undefined },
-    { query: { enabled: !!walletAddress } }
+    { query: { enabled: !!walletAddress, queryKey: getGetDashboardStatsQueryKey({ walletAddress: walletAddress ?? undefined }) } }
   );
 
   const handleConnectClick = async () => {

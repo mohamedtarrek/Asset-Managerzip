@@ -32,7 +32,7 @@ export default function SettingsPage() {
 
   const { data: settings, isLoading } = useGetSettings(
     { walletAddress: walletAddress ?? undefined },
-    { query: { enabled: !!walletAddress } }
+    { query: { enabled: !!walletAddress, queryKey: getGetSettingsQueryKey({ walletAddress: walletAddress ?? undefined }) } }
   );
   const updateSettings = useUpdateSettings();
 
