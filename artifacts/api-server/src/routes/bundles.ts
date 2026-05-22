@@ -95,6 +95,50 @@ router.get("/bundles/:id/wallets", async (req, res): Promise<void> => {
   res.json(rows);
 });
 
+// GET /bundles/:id/wallets/balances — live SOL + token balances for each bundle wallet
+router.get("/bundles/:id/wallets/balances", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid bundle id" }); return; }
+
+  const [bundle] = await db.select().from(bundlesTable).where(eq(bundlesTable.id, id));
+  if (!bundle) { res.status(404).json({ error: "Bundle not found" }); return; }
+
+  const walletRows = await db.select().from(bundleWalletsTable).where(eq(bundleWalletsTable.bundleId, id));
+  if (walletRows.length === 0) { res.json([]); return; }
+
+  const rpc = bundle.network === "devnet"
+    ? "https://api.devnet.solana.com"
+    : "https://api.mainnet-beta.solana.com";
+  const connection = getConnection(rpc);
+
+  const results = await Promise.all(
+    walletRows.map(async (w) => {
+      const pubkey = new PublicKey(w.walletPublicKey);
+      const [solLamports, tokenBalance] = await Promise.all([
+        connection.getBalance(pubkey).catch(() => 0),
+        (async () => {
+          if (!bundle.tokenAddress) return 0;
+          try {
+            const mintPubkey = new PublicKey(bundle.tokenAddress);
+            const ata = getAssociatedTokenAddressSync(mintPubkey, pubkey);
+            const account = await getAccount(connection, ata);
+            return Number(account.amount) / 10 ** 6;
+          } catch { return 0; }
+        })(),
+      ]);
+      return {
+        walletPublicKey: w.walletPublicKey,
+        isCreator: w.isCreator,
+        soldAt: w.soldAt,
+        solBalance: solLamports / LAMPORTS_PER_SOL,
+        tokenBalance,
+      };
+    })
+  );
+
+  res.json(results);
+});
+
 // POST /bundles — real Pump.Fun token creation with bundle buys
 router.post("/bundles", async (req, res): Promise<void> => {
   const parsed = CreateBundleBody.safeParse(req.body);

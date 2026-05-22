@@ -22,17 +22,28 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function tradeUrl(bundle: Bundle): string {
-  if (!bundle.tokenAddress) return "#";
   if (bundle.network === "devnet") {
-    return `https://explorer.solana.com/address/${bundle.tokenAddress}?cluster=devnet`;
+    return bundle.poolId
+      ? `https://raydium.io/liquidity/increase/?mode=add&pool_id=${bundle.poolId}`
+      : "https://raydium.io/liquidity-pools/";
   }
-  return `https://pump.fun/coin/${bundle.tokenAddress}`;
+  if (bundle.poolId) return `https://raydium.io/liquidity/increase/?mode=add&pool_id=${bundle.poolId}`;
+  if (bundle.tokenAddress) return `https://pump.fun/coin/${bundle.tokenAddress}`;
+  return "https://raydium.io/liquidity-pools/";
 }
 
 function tradeLinkLabel(bundle: Bundle): string {
-  if (bundle.network === "devnet") return "View on Solana Explorer (Devnet)";
-  return "View on Pump.fun";
+  if (bundle.network === "devnet") return "View on Raydium";
+  return bundle.poolId ? "View pool on Raydium" : "View on Pump.fun";
 }
+
+type WalletWithBalance = {
+  walletPublicKey: string;
+  isCreator: boolean;
+  soldAt: string | null;
+  solBalance: number;
+  tokenBalance: number;
+};
 
 function WalletList({ bundle, onSellComplete }: {
   bundle: Bundle;
@@ -40,7 +51,7 @@ function WalletList({ bundle, onSellComplete }: {
 }) {
   const { walletAddress } = useWallet();
   const { toast } = useToast();
-  const [wallets, setWallets] = useState<BundleWallet[] | null>(null);
+  const [wallets, setWallets] = useState<WalletWithBalance[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [sellingAll, setSellingAll] = useState(false);
   const [sellingWallet, setSellingWallet] = useState<string | null>(null);
@@ -48,7 +59,7 @@ function WalletList({ bundle, onSellComplete }: {
   const fetchWallets = async () => {
     setLoading(true);
     try {
-      const resp = await fetch(`${BASE_URL}api/bundles/${bundle.id}/wallets`);
+      const resp = await fetch(`${BASE_URL}api/bundles/${bundle.id}/wallets/balances`);
       const data = await resp.json();
       setWallets(data);
     } catch {
@@ -154,11 +165,30 @@ function WalletList({ bundle, onSellComplete }: {
       )}
 
       {!loading && bundleWallets.map(bw => (
-        <div key={bw.id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-muted/20 text-xs">
+        <div key={bw.walletPublicKey} className="flex items-center gap-3 px-3 py-2 rounded-md bg-muted/20 text-xs">
           <div className="flex-1 min-w-0">
             <span className="font-mono text-muted-foreground truncate block">
-              {bw.walletPublicKey.slice(0, 12)}...{bw.walletPublicKey.slice(-6)}
+              {bw.walletPublicKey.slice(0, 10)}...{bw.walletPublicKey.slice(-6)}
             </span>
+            <div className="flex items-center gap-3 mt-0.5">
+              <span className="text-muted-foreground/70">
+                <span className="text-foreground/80 font-mono">{bw.solBalance.toFixed(4)}</span> SOL
+              </span>
+              {bw.tokenBalance > 0 && (
+                <span className="text-muted-foreground/70">
+                  <span className="text-purple-400 font-mono font-semibold">
+                    {bw.tokenBalance >= 1_000_000
+                      ? `${(bw.tokenBalance / 1_000_000).toFixed(2)}M`
+                      : bw.tokenBalance >= 1_000
+                        ? `${(bw.tokenBalance / 1_000).toFixed(1)}K`
+                        : bw.tokenBalance.toFixed(0)}
+                  </span>{" "}{bundle.tokenSymbol}
+                </span>
+              )}
+              {bw.tokenBalance === 0 && !bw.soldAt && (
+                <span className="text-muted-foreground/50 italic">no tokens</span>
+              )}
+            </div>
           </div>
           {bw.soldAt ? (
             <Badge variant="outline" className="text-xs text-blue-400 border-blue-400/30 bg-blue-400/5 shrink-0">sold</Badge>
@@ -166,7 +196,7 @@ function WalletList({ bundle, onSellComplete }: {
             <Button
               size="sm"
               variant="outline"
-              className="h-6 text-xs shrink-0 border-green-500/30 text-green-400 hover:bg-green-500/10"
+              className="h-7 text-xs shrink-0 border-green-500/30 text-green-400 hover:bg-green-500/10"
               onClick={() => handleSellOne(bw.walletPublicKey)}
               disabled={sellingWallet === bw.walletPublicKey || sellingAll}
             >

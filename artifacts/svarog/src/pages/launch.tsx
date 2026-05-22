@@ -99,15 +99,30 @@ function extractApiError(err: unknown): string {
   return "Launch failed — please try again";
 }
 
+// Creator needs: ~0.5 SOL pool liquidity + ~2.5 SOL OpenBook market rent + ~0.5 SOL fees/buffer = ~3.5 SOL
+const CREATOR_BASE_SOL = 3.5;
+// Per-wallet: buy amount + 0.08 SOL for ATA rent + tx fees
+const PER_WALLET_BUFFER = 0.08;
+
+function devnetTotalSol(walletCount: number, solPerWallet: number) {
+  return CREATOR_BASE_SOL + walletCount * (solPerWallet + PER_WALLET_BUFFER);
+}
+
 function DevnetNotice({ walletCount, solPerWallet }: { walletCount: number; solPerWallet: number }) {
-  const totalSol = (5 + walletCount * (solPerWallet + 0.15)).toFixed(3);
+  const buyCost = (walletCount * solPerWallet).toFixed(2);
+  const gasCost = (walletCount * PER_WALLET_BUFFER).toFixed(2);
+  const total = devnetTotalSol(walletCount, solPerWallet).toFixed(2);
   return (
     <div className="flex items-start gap-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-xs text-blue-300">
       <Zap className="w-3.5 h-3.5 shrink-0 mt-0.5 text-blue-400" />
-      <span>
-        Devnet mode: launches use SPL token + Raydium (not Pump.Fun).{" "}
-        Your Phantom wallet will be asked to approve a transfer of ~<strong>{totalSol} SOL</strong> to fund the bundle wallets.
-      </span>
+      <div className="space-y-1">
+        <span className="font-medium text-blue-200">Devnet mode — Phantom will ask you to approve ~<strong>{total} SOL</strong></span>
+        <div className="text-blue-400/80 space-y-0.5">
+          <div>• {CREATOR_BASE_SOL} SOL — pool liquidity seed + OpenBook market rent + fees</div>
+          <div>• {buyCost} SOL — token buy amounts ({walletCount} wallets × {solPerWallet} SOL)</div>
+          <div>• {gasCost} SOL — gas fees + token account rent ({walletCount} wallets × {PER_WALLET_BUFFER} SOL)</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -207,11 +222,10 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
         toast({ title: "Phantom not connected", description: "Connect your Phantom wallet to fund the launch.", variant: "destructive" });
         return;
       }
-      // 5 SOL for creator (mint + market + pool + fees) + per bundle wallet amount
-      const totalSol = 5 + form.walletCount * (form.solPerWallet + 0.15);
+      const totalSol = devnetTotalSol(form.walletCount, form.solPerWallet);
       try {
         setIsFunding(true);
-        toast({ title: "Approve in Phantom", description: `Transferring ${totalSol.toFixed(3)} SOL to fund bundle wallets…` });
+        toast({ title: "Approve in Phantom", description: `Transferring ${totalSol.toFixed(2)} SOL to fund bundle wallets…` });
         await fundCreatorFromPhantom(rpc, walletAddress, creatorWallet.publicKey, totalSol);
         toast({ title: "Funded ✓", description: "SOL transferred. Launching bundle…" });
       } catch (err: unknown) {
@@ -398,10 +412,10 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
         toast({ title: "Phantom not connected", description: "Connect your Phantom wallet to fund the launch.", variant: "destructive" });
         return;
       }
-      const totalSol = 5 + walletCount * (solPerWallet + 0.15);
+      const totalSol = devnetTotalSol(walletCount, solPerWallet);
       try {
         setIsFunding(true);
-        toast({ title: "Approve in Phantom", description: `Transferring ${totalSol.toFixed(3)} SOL to fund bundle wallets…` });
+        toast({ title: "Approve in Phantom", description: `Transferring ${totalSol.toFixed(2)} SOL to fund bundle wallets…` });
         await fundCreatorFromPhantom(rpc, walletAddress, creatorWallet.publicKey, totalSol);
         toast({ title: "Funded ✓", description: "SOL transferred. Launching bundle…" });
       } catch (err: unknown) {

@@ -46,7 +46,7 @@ const TOKEN_DECIMALS    = 6;
 const TOTAL_SUPPLY      = 1_000_000_000;                      // 1 billion
 const TOTAL_SUPPLY_RAW  = TOTAL_SUPPLY * 10 ** TOKEN_DECIMALS; // smallest units
 const POOL_TOKEN_SHARE  = 0.8;   // 80 % of supply goes to LP
-const POOL_SOL_AMOUNT   = 2;     // 2 SOL added as quote liquidity
+const POOL_SOL_AMOUNT   = 0.5;   // 0.5 SOL added as quote liquidity (sufficient for devnet)
 
 type WalletRow = { publicKey: string; encryptedPrivateKey: string };
 
