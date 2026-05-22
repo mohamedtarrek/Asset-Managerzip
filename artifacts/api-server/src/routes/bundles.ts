@@ -122,7 +122,11 @@ router.post("/bundles", async (req, res): Promise<void> => {
         PRIORITY_FEES
       );
 
-      if (!createResult.success) throw new Error("createAndBuy failed");
+      if (!createResult.success) {
+        const sdkErr = (createResult as any).error;
+        const msg = sdkErr instanceof Error ? sdkErr.message : (typeof sdkErr === "string" ? sdkErr : "createAndBuy failed");
+        throw new Error(msg);
+      }
 
       // Bundle wallet buys (sequential — for true Jito atomicity, upgrade to Jito bundle API)
       const signatures: string[] = [createResult.signature ?? ""];
@@ -237,7 +241,11 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
         PRIORITY_FEES
       );
 
-      if (!createResult.success) throw new Error("VAMP createAndBuy failed");
+      if (!createResult.success) {
+        const sdkErr = (createResult as any).error;
+        const msg = sdkErr instanceof Error ? sdkErr.message : (typeof sdkErr === "string" ? sdkErr : "VAMP createAndBuy failed");
+        throw new Error(msg);
+      }
 
       for (const w of wallets.slice(1)) {
         try {
