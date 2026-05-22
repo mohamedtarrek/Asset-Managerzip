@@ -1,7 +1,10 @@
 import { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { PumpFunSDK } from "pumpdotfun-sdk";
 import { AnchorProvider } from "@coral-xyz/anchor";
-import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet.js";
+import _NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet.js";
+// esbuild CJS/ESM interop: the file uses exports.default so the resolved value
+// may be the namespace object; unwrap .default if needed.
+const NodeWallet = (_NodeWallet as any).default ?? _NodeWallet;
 import bs58 from "bs58";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 
