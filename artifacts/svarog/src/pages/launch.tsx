@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Rocket, Copy, Lock, Loader2, CheckCircle, Upload, X, AlertTriangle } from "lucide-react";
+import { Rocket, Copy, Lock, Loader2, CheckCircle, Upload, X, AlertTriangle, Zap } from "lucide-react";
 import { useWallet, RPC_ENDPOINTS } from "@/lib/wallet-context";
 import { useI18n } from "@/lib/i18n";
+import { Transaction, SystemProgram, PublicKey, Connection, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   useCreateBundle,
   useCreateVampBundle,
@@ -98,25 +99,58 @@ function extractApiError(err: unknown): string {
   return "Launch failed — please try again";
 }
 
-function DevnetWarning({ lang }: { lang: string }) {
+function DevnetNotice({ walletCount, solPerWallet }: { walletCount: number; solPerWallet: number }) {
+  const totalSol = (5 + walletCount * (solPerWallet + 0.15)).toFixed(3);
   return (
-    <div className="flex items-start gap-2 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs text-yellow-400">
-      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+    <div className="flex items-start gap-2 p-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-xs text-blue-300">
+      <Zap className="w-3.5 h-3.5 shrink-0 mt-0.5 text-blue-400" />
       <span>
-        {lang === "ar"
-          ? "Pump.Fun يعمل على الشبكة الرئيسية فقط. ستفشل الإطلاقات على شبكة التطوير. قم بالتبديل إلى الشبكة الرئيسية في الشريط العلوي."
-          : "Pump.Fun only exists on Mainnet. Launches on Devnet will fail. Switch to Mainnet in the top bar before launching."}
+        Devnet mode: launches use SPL token + Raydium (not Pump.Fun).{" "}
+        Your Phantom wallet will be asked to approve a transfer of ~<strong>{totalSol} SOL</strong> to fund the bundle wallets.
       </span>
     </div>
   );
 }
 
+/**
+ * Transfer SOL from the connected Phantom wallet to the creator wallet so the
+ * server-side bundle flow has funds without relying on the rate-limited faucet.
+ *
+ * creatorAddress — public key of wallets[0] (the creator wallet stored in the app)
+ * totalSol       — amount to send (creator SOL for pool + per-wallet amounts)
+ */
+async function fundCreatorFromPhantom(
+  rpcEndpoint: string,
+  phantomAddress: string,
+  creatorAddress: string,
+  totalSol: number,
+): Promise<string> {
+  if (!window.solana?.isPhantom) throw new Error("Phantom wallet not connected");
+
+  const connection = new Connection(rpcEndpoint, "confirmed");
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+
+  const tx = new Transaction({ recentBlockhash: blockhash, feePayer: new PublicKey(phantomAddress) });
+  tx.add(
+    SystemProgram.transfer({
+      fromPubkey: new PublicKey(phantomAddress),
+      toPubkey: new PublicKey(creatorAddress),
+      lamports: Math.floor(totalSol * LAMPORTS_PER_SOL),
+    }),
+  );
+
+  const { signature } = await window.solana.signAndSendTransaction(tx);
+  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+  return signature;
+}
+
 function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
   const { toast } = useToast();
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const { network } = useWallet();
   const queryClient = useQueryClient();
   const createBundle = useCreateBundle();
+  const [isFunding, setIsFunding] = useState(false);
 
   const { data: wallets } = useListWallets(
     { ownerAddress: walletAddress ?? undefined },
@@ -160,17 +194,47 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
       return;
     }
 
+    const rpc = RPC_ENDPOINTS[network];
+
+    // On devnet: transfer SOL from Phantom → creator wallet before launching
+    if (network === "devnet") {
+      const creatorWallet = wallets?.[0];
+      if (!creatorWallet) {
+        toast({ title: "No creator wallet found", description: "Generate wallets first.", variant: "destructive" });
+        return;
+      }
+      if (!window.solana?.isPhantom) {
+        toast({ title: "Phantom not connected", description: "Connect your Phantom wallet to fund the launch.", variant: "destructive" });
+        return;
+      }
+      // 5 SOL for creator (mint + market + pool + fees) + per bundle wallet amount
+      const totalSol = 5 + form.walletCount * (form.solPerWallet + 0.15);
+      try {
+        setIsFunding(true);
+        toast({ title: "Approve in Phantom", description: `Transferring ${totalSol.toFixed(3)} SOL to fund bundle wallets…` });
+        await fundCreatorFromPhantom(rpc, walletAddress, creatorWallet.publicKey, totalSol);
+        toast({ title: "Funded ✓", description: "SOL transferred. Launching bundle…" });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Transaction rejected";
+        toast({ title: "Funding failed", description: msg, variant: "destructive" });
+        setIsFunding(false);
+        return;
+      } finally {
+        setIsFunding(false);
+      }
+    }
+
     createBundle.mutate(
       {
         data: {
           ...form,
           ownerAddress: walletAddress,
-          rpcEndpoint: RPC_ENDPOINTS[network],
+          rpcEndpoint: rpc,
         },
       },
       {
         onSuccess: () => {
-          toast({ title: "Bundle submitted — launching on Pump.Fun..." });
+          toast({ title: network === "devnet" ? "Bundle submitted — launching on Devnet…" : "Bundle submitted — launching on Pump.Fun…" });
           setForm({ tokenName: "", tokenSymbol: "", tokenDescription: "", tokenImageUrl: "", walletCount: 10, solPerWallet: 0.1 });
           queryClient.invalidateQueries({ queryKey: getListWalletsQueryKey() });
         },
@@ -187,7 +251,7 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {network === "devnet" && <DevnetWarning lang={lang} />}
+      {network === "devnet" && <DevnetNotice walletCount={form.walletCount} solPerWallet={form.solPerWallet} />}
 
       {/* Wallet availability notice */}
       {walletAddress && availableCount < 5 && (
@@ -270,10 +334,12 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
         </p>
       </div>
 
-      <Button type="submit" className="w-full" disabled={createBundle.isPending || !walletAddress || availableCount === 0}>
-        {createBundle.isPending
-          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</>
-          : <><Rocket className="w-4 h-4 mr-2" /> {t("launch_bundle")}</>
+      <Button type="submit" className="w-full" disabled={createBundle.isPending || isFunding || !walletAddress || availableCount === 0}>
+        {isFunding
+          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Funding wallets…</>
+          : createBundle.isPending
+            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</>
+            : <><Rocket className="w-4 h-4 mr-2" /> {t("launch_bundle")}</>
         }
       </Button>
     </form>
@@ -282,9 +348,10 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
 
 function VampForm({ walletAddress }: { walletAddress: string | null }) {
   const { toast } = useToast();
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const { network } = useWallet();
   const createVamp = useCreateVampBundle();
+  const [isFunding, setIsFunding] = useState(false);
   const [ca, setCa] = useState("");
   const [debouncedCa, setDebouncedCa] = useState("");
   const [walletCount, setWalletCount] = useState(10);
@@ -306,7 +373,7 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
     { query: { enabled: debouncedCa.length >= 32, queryKey: getGetTokenMetadataQueryKey({ ca: debouncedCa }) } }
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walletAddress) { toast({ title: t("connect_first"), variant: "destructive" }); return; }
     if (!ca) { toast({ title: t("source_token_ca"), variant: "destructive" }); return; }
@@ -318,6 +385,34 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
       });
       return;
     }
+
+    const rpc = RPC_ENDPOINTS[network];
+
+    if (network === "devnet") {
+      const creatorWallet = wallets?.[0];
+      if (!creatorWallet) {
+        toast({ title: "No creator wallet found", description: "Generate wallets first.", variant: "destructive" });
+        return;
+      }
+      if (!window.solana?.isPhantom) {
+        toast({ title: "Phantom not connected", description: "Connect your Phantom wallet to fund the launch.", variant: "destructive" });
+        return;
+      }
+      const totalSol = 5 + walletCount * (solPerWallet + 0.15);
+      try {
+        setIsFunding(true);
+        toast({ title: "Approve in Phantom", description: `Transferring ${totalSol.toFixed(3)} SOL to fund bundle wallets…` });
+        await fundCreatorFromPhantom(rpc, walletAddress, creatorWallet.publicKey, totalSol);
+        toast({ title: "Funded ✓", description: "SOL transferred. Launching bundle…" });
+      } catch (err: unknown) {
+        toast({ title: "Funding failed", description: err instanceof Error ? err.message : "Transaction rejected", variant: "destructive" });
+        setIsFunding(false);
+        return;
+      } finally {
+        setIsFunding(false);
+      }
+    }
+
     createVamp.mutate(
       {
         data: {
@@ -325,7 +420,7 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
           sourceTokenAddress: ca,
           walletCount,
           solPerWallet,
-          rpcEndpoint: RPC_ENDPOINTS[network],
+          rpcEndpoint: rpc,
         },
       },
       {
@@ -339,7 +434,7 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {network === "devnet" && <DevnetWarning lang={lang} />}
+      {network === "devnet" && <DevnetNotice walletCount={walletCount} solPerWallet={solPerWallet} />}
 
       <div className="space-y-1.5">
         <Label htmlFor="sourceCA" className="text-xs text-muted-foreground">{t("source_token_ca")}</Label>
@@ -401,10 +496,12 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
         />
       </div>
 
-      <Button type="submit" className="w-full" disabled={createVamp.isPending || !walletAddress || !ca}>
-        {createVamp.isPending
-          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</>
-          : <><Copy className="w-4 h-4 mr-2" /> {t("vamp_launch")}</>
+      <Button type="submit" className="w-full" disabled={createVamp.isPending || isFunding || !walletAddress || !ca}>
+        {isFunding
+          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Funding wallets…</>
+          : createVamp.isPending
+            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</>
+            : <><Copy className="w-4 h-4 mr-2" /> {t("vamp_launch")}</>
         }
       </Button>
     </form>

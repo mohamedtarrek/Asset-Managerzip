@@ -111,19 +111,40 @@ export async function launchDevnetBundle(params: {
   let   marketId:  PublicKey  = PublicKey.default;
   let   poolId:    string     = "";
 
-  // ── 0. Ensure creator has enough SOL ──────────────────────────────────────
-  log("[DEVNET] Topping up creator SOL for market + pool creation...");
-  await topUpCreatorSol(rpcEndpoint, creatorKeypair, connection);
+  // ── 0. Ensure creator has enough SOL (Phantom already funded it; airdrop is fallback)
+  const creatorBalance = await connection.getBalance(creatorKeypair.publicKey).catch(() => 0);
+  if (creatorBalance === 0) {
+    log("[DEVNET] Creator has 0 SOL — attempting faucet airdrop as fallback...");
+    await topUpCreatorSol(rpcEndpoint, creatorKeypair, connection);
+  } else {
+    log(`[DEVNET] Creator balance: ${(creatorBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL — skipping airdrop`);
+  }
 
-  // ── 0b. Ensure bundle wallets have enough SOL (ATA rent + solPerWallet + fees)
+  // ── 0b. Fund bundle wallets from creator (no faucet needed)
   if (bundleWallets.length > 0) {
-    log(`[DEVNET] Airdropping SOL to ${bundleWallets.length} bundle wallet(s)...`);
-    const neededSol = Math.max(2, solPerWallet + 0.1); // ATA rent + buy amount + fees
-    const bundleKeys = bundleWallets.map(w => {
-      try { return keypairFromEncrypted(w.encryptedPrivateKey).publicKey; }
-      catch { return creatorKeypair.publicKey; }
-    });
-    await airdropIfDevnet(rpcEndpoint, bundleKeys, neededSol, 4);
+    log(`[DEVNET] Distributing SOL from creator to ${bundleWallets.length} bundle wallet(s)...`);
+    const perWalletLamports = Math.floor((solPerWallet + 0.05) * LAMPORTS_PER_SOL); // buy + ATA rent + fees
+    for (const w of bundleWallets) {
+      try {
+        const buyerKeypair = keypairFromEncrypted(w.encryptedPrivateKey);
+        const buyerBalance = await connection.getBalance(buyerKeypair.publicKey).catch(() => 0);
+        if (buyerBalance >= perWalletLamports) continue; // already funded
+        const deficit = perWalletLamports - buyerBalance;
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(SystemProgram.transfer({
+            fromPubkey: creatorKeypair.publicKey,
+            toPubkey:   buyerKeypair.publicKey,
+            lamports:   deficit,
+          })),
+          [creatorKeypair],
+          { commitment: "confirmed" },
+        );
+        log(`[DEVNET] Funded ${w.publicKey.slice(0, 8)}... with ${(deficit / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+      } catch (err) {
+        log(`[DEVNET] Could not fund ${w.publicKey.slice(0, 8)}...: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   // ── 1. Create SPL token mint ───────────────────────────────────────────────

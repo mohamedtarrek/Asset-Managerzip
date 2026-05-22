@@ -27,6 +27,7 @@ declare global {
       on: (event: string, handler: (...args: unknown[]) => void) => void;
       off: (event: string, handler: (...args: unknown[]) => void) => void;
       publicKey?: { toString(): string } | null;
+      signAndSendTransaction: (tx: unknown) => Promise<{ signature: string }>;
     };
   }
 }
