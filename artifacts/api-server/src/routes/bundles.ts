@@ -3,7 +3,8 @@ import type { IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
 import { db, bundlesTable, activityTable, walletsTable, settingsTable } from "@workspace/db";
 import { Keypair } from "@solana/web3.js";
-import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt } from "../lib/solana.js";
+import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt, airdropIfDevnet, getConnection } from "../lib/solana.js";
+import { launchDevnetBundle } from "../lib/devnet-launch.js";
 import {
   ListBundlesQueryParams,
   CreateBundleBody,
@@ -112,18 +113,37 @@ router.post("/bundles", async (req, res): Promise<void> => {
       const isDevnet = !!(rpcEndpoint?.includes("devnet"));
 
       if (isDevnet) {
-        // Pump.fun is mainnet-only — simulate the launch on devnet
-        await new Promise((r) => setTimeout(r, 1000 + walletCount * 150));
-        const mockSig = `devnet_sim_${mintKeypair.publicKey.toString().slice(0, 12)}_${Date.now()}`;
-        await db.update(bundlesTable).set({ status: "active", txHash: mockSig }).where(eq(bundlesTable.id, bundle.id));
+        // Devnet: real SPL token + Raydium AMM pool (Pump.fun is mainnet-only)
+        await airdropIfDevnet(rpcEndpoint, [creatorKeypair.publicKey, ...bundleWallets.map(w => { try { return keypairFromEncrypted(w.encryptedPrivateKey).publicKey; } catch { return creatorKeypair.publicKey; } })]);
+
+        const devnetLog = (msg: string) => req.log?.info(msg);
+        const result = await launchDevnetBundle({
+          rpcEndpoint: rpcEndpoint ?? "https://api.devnet.solana.com",
+          creatorKeypair,
+          mintKeypair,
+          tokenName,
+          tokenSymbol,
+          bundleWallets,
+          solPerWallet: sol,
+          log: devnetLog,
+        });
+
+        const primaryTx = result.txHashes[0] ?? "";
+        await db.update(bundlesTable).set({
+          status: "active",
+          txHash: primaryTx,
+          tokenAddress: result.mintAddress,
+        }).where(eq(bundlesTable.id, bundle.id));
+
+        const poolNote = result.poolId ? ` | Pool: ${result.poolId.slice(0, 8)}...` : "";
         await db.insert(activityTable).values({
           ownerAddress,
           type: "bundle_launch",
-          description: `[DEVNET SIM] Launched ${tokenName} (${tokenSymbol}) with ${walletCount} wallets`,
+          description: `[DEVNET] Launched ${tokenName} (${tokenSymbol}) — SPL mint + Raydium pool with ${walletCount} wallets${poolNote}`,
           tokenName,
           tokenSymbol,
           amount: sol * walletCount,
-          txHash: mockSig,
+          txHash: primaryTx,
         });
         return;
       }
@@ -252,18 +272,39 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
       const isDevnet = !!(vampRpc?.includes("devnet"));
 
       if (isDevnet) {
-        // Pump.fun is mainnet-only — simulate the launch on devnet
-        await new Promise((r) => setTimeout(r, 1000 + walletCount * 150));
-        const mockSig = `devnet_sim_${mintKeypair.publicKey.toString().slice(0, 12)}_${Date.now()}`;
-        await db.update(bundlesTable).set({ status: "active", txHash: mockSig }).where(eq(bundlesTable.id, bundle.id));
+        // Devnet: real SPL token + Raydium AMM pool
+        const vampCreatorKeypair = keypairFromEncrypted(wallets[0].encryptedPrivateKey);
+        const allWalletKeys = wallets.map(w => { try { return keypairFromEncrypted(w.encryptedPrivateKey).publicKey; } catch { return vampCreatorKeypair.publicKey; } });
+        await airdropIfDevnet(vampRpc, allWalletKeys);
+
+        const vampDevnetLog = (msg: string) => req.log?.info(msg);
+        const vampResult = await launchDevnetBundle({
+          rpcEndpoint: vampRpc ?? "https://api.devnet.solana.com",
+          creatorKeypair: vampCreatorKeypair,
+          mintKeypair,
+          tokenName,
+          tokenSymbol,
+          bundleWallets: wallets.slice(1),
+          solPerWallet: sol,
+          log: vampDevnetLog,
+        });
+
+        const vampPrimaryTx = vampResult.txHashes[0] ?? "";
+        await db.update(bundlesTable).set({
+          status: "active",
+          txHash: vampPrimaryTx,
+          tokenAddress: vampResult.mintAddress,
+        }).where(eq(bundlesTable.id, bundle.id));
+
+        const vampPoolNote = vampResult.poolId ? ` | Pool: ${vampResult.poolId.slice(0, 8)}...` : "";
         await db.insert(activityTable).values({
           ownerAddress,
           type: "vamp_launch",
-          description: `[DEVNET SIM] VAMP'd ${tokenName} (${tokenSymbol}) from ${sourceTokenAddress.slice(0, 8)}... with ${walletCount} wallets`,
+          description: `[DEVNET] VAMP'd ${tokenName} (${tokenSymbol}) from ${sourceTokenAddress.slice(0, 8)}... — SPL mint + Raydium pool${vampPoolNote}`,
           tokenName,
           tokenSymbol,
           amount: sol * walletCount,
-          txHash: mockSig,
+          txHash: vampPrimaryTx,
         });
         return;
       }

@@ -11,9 +11,12 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
+    "@raydium-io/raydium-sdk-v2": "2.0.1-rc.0",
+    "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "bn.js": "^5.2.3",
     "bs58": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -24,6 +27,7 @@
     "pumpdotfun-sdk": "^1.4.2"
   },
   "devDependencies": {
+    "@types/bn.js": "^5.2.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
