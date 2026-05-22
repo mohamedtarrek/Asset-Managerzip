@@ -2,8 +2,6 @@ import { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.j
 import { PumpFunSDK } from "pumpdotfun-sdk";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import _NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet.js";
-// esbuild CJS/ESM interop: the file uses exports.default so the resolved value
-// may be the namespace object; unwrap .default if needed.
 const NodeWallet = (_NodeWallet as any).default ?? _NodeWallet;
 import bs58 from "bs58";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
@@ -67,7 +65,6 @@ export async function getSolBalance(publicKey: string, rpcEndpoint?: string | nu
 }
 
 export async function urlToBlob(url: string): Promise<Blob> {
-  // Handle base64 data URIs from frontend file upload
   if (url.startsWith("data:")) {
     const [header, base64] = url.split(",");
     const mimeMatch = header.match(/data:([^;]+)/);
@@ -85,48 +82,94 @@ export function lamportsToBigInt(sol: number): bigint {
 }
 
 /**
- * On devnet endpoints, airdrop SOL to each supplied public key and wait for
- * confirmation. Retries up to `retries` times per key with exponential backoff.
- * Verifies balance after airdrop — throws if a key still has 0 SOL after all
- * retries (so callers know immediately instead of getting a cryptic tx error).
+ * Try to airdrop via the Solana web faucet (higher rate limits than RPC).
+ * Returns true if successful.
+ */
+async function tryWebFaucet(address: string, amountSol: number): Promise<boolean> {
+  try {
+    const resp = await fetch("https://faucet.solana.com/api/airdrop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address, amount: amountSol, network: "devnet" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * On devnet: ensure each wallet has at least `minSol` SOL.
+ * Strategy (each step only runs if the wallet still needs more SOL):
+ *   1. Check existing balance — skip entirely if already funded.
+ *   2. Try RPC requestAirdrop (up to `rpcRetries` times with backoff).
+ *   3. Try the Solana web faucet as a fallback (higher rate limits).
+ *   4. Re-check balance. If still below minimum, log a warning but NEVER throw —
+ *      the individual transaction balance checks in devnet-launch.ts handle it
+ *      gracefully so the launch can continue for wallets that do have funds.
+ *
  * No-op on mainnet/testnet.
  */
 export async function airdropIfDevnet(
   rpcEndpoint: string | null | undefined,
   publicKeys: PublicKey[],
   amountSol = 2,
-  retries = 4,
+  rpcRetries = 3,
 ): Promise<void> {
   if (!rpcEndpoint?.includes("devnet")) return;
+
   const connection = getConnection(rpcEndpoint);
-  const lamports = amountSol * LAMPORTS_PER_SOL;
+  const minLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
 
   for (const key of publicKeys) {
-    let success = false;
-    for (let attempt = 0; attempt < retries; attempt++) {
+    const address = key.toBase58();
+
+    // 1. Check existing balance — skip if already funded
+    const existingBalance = await connection.getBalance(key).catch(() => 0);
+    if (existingBalance >= minLamports) {
+      await new Promise((r) => setTimeout(r, 200));
+      continue;
+    }
+
+    let funded = false;
+
+    // 2. Try RPC airdrop with exponential backoff
+    for (let attempt = 0; attempt < rpcRetries && !funded; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+      }
       try {
-        const sig = await connection.requestAirdrop(key, lamports);
+        const sig = await connection.requestAirdrop(key, minLamports);
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
         await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-        success = true;
-        break;
+        funded = true;
       } catch {
-        // Rate-limit or network hiccup — wait and retry
-        const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s
-        await new Promise((r) => setTimeout(r, delay));
+        // rate-limited or network error — try next attempt
       }
     }
-    if (!success) {
-      // Last-chance balance check: if the wallet already has SOL we can proceed
-      const balance = await connection.getBalance(key).catch(() => 0);
-      if (balance === 0) {
-        throw new Error(
-          `Devnet airdrop failed for ${key.toBase58().slice(0, 8)}... after ${retries} attempts. ` +
-          `The public devnet faucet is rate-limited. Try again in a few minutes or use a private devnet RPC endpoint.`
+
+    // 3. Try web faucet as backup
+    if (!funded) {
+      funded = await tryWebFaucet(address, amountSol);
+      if (funded) {
+        // Give the faucet tx a moment to land
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+
+    // 4. Final balance check — warn but never throw
+    if (!funded) {
+      const finalBalance = await connection.getBalance(key).catch(() => 0);
+      if (finalBalance === 0) {
+        console.warn(
+          `[DEVNET] Airdrop warning: wallet ${address.slice(0, 8)}... has 0 SOL and faucet is rate-limited. ` +
+          `Transactions from this wallet will be skipped. Fund it manually at https://faucet.solana.com`
         );
       }
     }
-    // Small gap between wallets to reduce back-to-back rate limiting
-    await new Promise((r) => setTimeout(r, 600));
+
+    // Small gap between wallets
+    await new Promise((r) => setTimeout(r, 500));
   }
 }

@@ -74,11 +74,20 @@ function computeVaultSigner(marketId: PublicKey, dexProgram: PublicKey): PublicK
 }
 
 // ── Helper: top up creator SOL on devnet (market + pool creation costs ~4 SOL)
-// Delegates to the shared airdropIfDevnet helper which includes retry + balance check.
-async function topUpCreatorSol(rpcEndpoint: string, payer: Keypair): Promise<void> {
-  await airdropIfDevnet(rpcEndpoint, [payer.publicKey], 2, 4);
-  // Second airdrop attempt for extra headroom (market + pool costs ~4 SOL total)
-  await airdropIfDevnet(rpcEndpoint, [payer.publicKey], 2, 3).catch(() => {/* already have some SOL */});
+// Tries two rounds of airdrop to accumulate enough SOL, then verifies balance.
+// Throws a user-friendly error only if creator ends up with 0 SOL (cannot pay fees).
+async function topUpCreatorSol(rpcEndpoint: string, payer: Keypair, connection: Connection): Promise<void> {
+  // Two rounds to build up ~4 SOL headroom (market + pool + fees)
+  await airdropIfDevnet(rpcEndpoint, [payer.publicKey], 2, 3);
+  await airdropIfDevnet(rpcEndpoint, [payer.publicKey], 2, 2);
+
+  const balance = await connection.getBalance(payer.publicKey).catch(() => 0);
+  if (balance === 0) {
+    throw new Error(
+      "Creator wallet has 0 SOL on devnet and the faucet is currently rate-limited. " +
+      "Please fund the creator wallet manually at https://faucet.solana.com, then try again."
+    );
+  }
 }
 
 // ── Main export ──────────────────────────────────────────────────────────────
@@ -104,7 +113,7 @@ export async function launchDevnetBundle(params: {
 
   // ── 0. Ensure creator has enough SOL ──────────────────────────────────────
   log("[DEVNET] Topping up creator SOL for market + pool creation...");
-  await topUpCreatorSol(rpcEndpoint, creatorKeypair);
+  await topUpCreatorSol(rpcEndpoint, creatorKeypair, connection);
 
   // ── 0b. Ensure bundle wallets have enough SOL (ATA rent + solPerWallet + fees)
   if (bundleWallets.length > 0) {
