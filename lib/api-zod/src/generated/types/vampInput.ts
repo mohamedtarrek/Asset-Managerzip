@@ -11,4 +11,5 @@ export interface VampInput {
   sourceTokenAddress: string;
   walletCount: number;
   solPerWallet?: number;
+  rpcEndpoint?: string;
 }

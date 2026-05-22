@@ -834,6 +834,8 @@ components:
           type: integer
         solPerWallet:
           type: number
+        rpcEndpoint:
+          type: string
         walletIds:
           type: array
           items:
@@ -851,6 +853,8 @@ components:
           type: integer
         solPerWallet:
           type: number
+        rpcEndpoint:
+          type: string
 
     BundleStats:
       type: object

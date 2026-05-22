@@ -135,6 +135,7 @@ export interface BundleInput {
   tokenImageUrl?: string;
   walletCount: number;
   solPerWallet?: number;
+  rpcEndpoint?: string;
   walletIds?: number[];
 }
 
@@ -143,6 +144,7 @@ export interface VampInput {
   sourceTokenAddress: string;
   walletCount: number;
   solPerWallet?: number;
+  rpcEndpoint?: string;
 }
 
 export interface BundleStats {

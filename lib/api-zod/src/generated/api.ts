@@ -252,6 +252,7 @@ export const CreateBundleBody = zod.object({
   "tokenImageUrl": zod.string().optional(),
   "walletCount": zod.number(),
   "solPerWallet": zod.number().optional(),
+  "rpcEndpoint": zod.string().optional(),
   "walletIds": zod.array(zod.number()).optional()
 })
 
@@ -263,7 +264,8 @@ export const CreateVampBundleBody = zod.object({
   "ownerAddress": zod.string(),
   "sourceTokenAddress": zod.string(),
   "walletCount": zod.number(),
-  "solPerWallet": zod.number().optional()
+  "solPerWallet": zod.number().optional(),
+  "rpcEndpoint": zod.string().optional()
 })
 
 

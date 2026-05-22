@@ -14,5 +14,6 @@ export interface BundleInput {
   tokenImageUrl?: string;
   walletCount: number;
   solPerWallet?: number;
+  rpcEndpoint?: string;
   walletIds?: number[];
 }

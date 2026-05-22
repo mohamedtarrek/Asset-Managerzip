@@ -62,7 +62,7 @@ router.post("/bundles", async (req, res): Promise<void> => {
   const parsed = CreateBundleBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
-  const { ownerAddress, tokenName, tokenSymbol, tokenDescription, tokenImageUrl, walletCount, solPerWallet } = parsed.data;
+  const { ownerAddress, tokenName, tokenSymbol, tokenDescription, tokenImageUrl, walletCount, solPerWallet, rpcEndpoint: requestRpc } = parsed.data;
 
   if (!tokenImageUrl) {
     res.status(400).json({ error: "Token image URL is required for Pump.Fun launch" });
@@ -77,7 +77,8 @@ router.post("/bundles", async (req, res): Promise<void> => {
     return;
   }
 
-  const rpcEndpoint = await getRpcForOwner(ownerAddress);
+  const settingsRpc = await getRpcForOwner(ownerAddress);
+  const rpcEndpoint = requestRpc ?? settingsRpc;
   const sdk = getPumpFunSDK(rpcEndpoint);
   const creatorWallet = wallets[0];
   const bundleWallets = wallets.slice(1);
@@ -168,7 +169,7 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
   const parsed = CreateVampBundleBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
-  const { ownerAddress, sourceTokenAddress, walletCount, solPerWallet } = parsed.data;
+  const { ownerAddress, sourceTokenAddress, walletCount, solPerWallet, rpcEndpoint: requestRpc } = parsed.data;
 
   // Fetch real metadata from Pump.Fun
   let tokenName = "VAMP Copy";
@@ -200,8 +201,9 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
     return;
   }
 
-  const rpcEndpoint = await getRpcForOwner(ownerAddress);
-  const sdk = getPumpFunSDK(rpcEndpoint);
+  const settingsRpc2 = await getRpcForOwner(ownerAddress);
+  const vampRpc = requestRpc ?? settingsRpc2;
+  const sdk = getPumpFunSDK(vampRpc);
   const creatorKeypair = keypairFromEncrypted(wallets[0].encryptedPrivateKey);
   const mintKeypair = Keypair.generate();
   const sol = solPerWallet ?? 0.1;

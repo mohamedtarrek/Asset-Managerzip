@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Rocket, Copy, Lock, Loader2, CheckCircle, Upload, X } from "lucide-react";
-import { useWallet } from "@/lib/wallet-context";
+import { Rocket, Copy, Lock, Loader2, CheckCircle, Upload, X, AlertTriangle } from "lucide-react";
+import { useWallet, RPC_ENDPOINTS } from "@/lib/wallet-context";
 import { useI18n } from "@/lib/i18n";
 import {
   useCreateBundle,
@@ -88,11 +88,42 @@ function ImageUpload({ value, onChange }: { value: string; onChange: (dataUrl: s
   );
 }
 
+function extractApiError(err: unknown): string {
+  if (err instanceof Error) {
+    // ApiError.message is already formatted as "HTTP 400 Bad Request: <api error message>"
+    // Strip the HTTP prefix to show only the relevant part
+    const msg = err.message.replace(/^HTTP \d+ [^:]+:\s*/i, "");
+    return msg || err.message;
+  }
+  return "Launch failed — please try again";
+}
+
+function DevnetWarning({ lang }: { lang: string }) {
+  return (
+    <div className="flex items-start gap-2 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs text-yellow-400">
+      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+      <span>
+        {lang === "ar"
+          ? "Pump.Fun يعمل على الشبكة الرئيسية فقط. ستفشل الإطلاقات على شبكة التطوير. قم بالتبديل إلى الشبكة الرئيسية في الشريط العلوي."
+          : "Pump.Fun only exists on Mainnet. Launches on Devnet will fail. Switch to Mainnet in the top bar before launching."}
+      </span>
+    </div>
+  );
+}
+
 function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
   const { toast } = useToast();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const { network } = useWallet();
   const queryClient = useQueryClient();
   const createBundle = useCreateBundle();
+
+  const { data: wallets } = useListWallets(
+    { ownerAddress: walletAddress ?? undefined },
+    { query: { enabled: !!walletAddress, queryKey: getListWalletsQueryKey({ ownerAddress: walletAddress ?? undefined }) } }
+  );
+  const availableCount = wallets?.length ?? 0;
+
   const [form, setForm] = useState({
     tokenName: "",
     tokenSymbol: "",
@@ -102,29 +133,75 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
     solPerWallet: 0.1,
   });
 
+  // Cap walletCount to available wallets
+  useEffect(() => {
+    if (availableCount > 0 && form.walletCount > availableCount) {
+      setForm(p => ({ ...p, walletCount: Math.max(1, availableCount) }));
+    }
+  }, [availableCount]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walletAddress) { toast({ title: t("connect_first"), variant: "destructive" }); return; }
-    if (!form.tokenName || !form.tokenSymbol) { toast({ title: t("token_name") + " & " + t("token_symbol"), variant: "destructive" }); return; }
-    if (!form.tokenImageUrl) { toast({ title: t("image_required"), variant: "destructive" }); return; }
+    if (!form.tokenName || !form.tokenSymbol) {
+      toast({ title: `${t("token_name")} & ${t("token_symbol")} required`, variant: "destructive" });
+      return;
+    }
+    if (!form.tokenImageUrl) {
+      toast({ title: t("image_required"), variant: "destructive" });
+      return;
+    }
+    if (availableCount < form.walletCount) {
+      toast({
+        title: `Not enough wallets`,
+        description: `You have ${availableCount} wallet${availableCount !== 1 ? "s" : ""} but selected ${form.walletCount}. Generate more wallets first.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     createBundle.mutate(
-      { data: { ...form, ownerAddress: walletAddress } },
+      {
+        data: {
+          ...form,
+          ownerAddress: walletAddress,
+          rpcEndpoint: RPC_ENDPOINTS[network],
+        },
+      },
       {
         onSuccess: () => {
-          toast({ title: t("launch_bundle") + "!" });
+          toast({ title: "Bundle submitted — launching on Pump.Fun..." });
           setForm({ tokenName: "", tokenSymbol: "", tokenDescription: "", tokenImageUrl: "", walletCount: 10, solPerWallet: 0.1 });
           queryClient.invalidateQueries({ queryKey: getListWalletsQueryKey() });
         },
         onError: (err: unknown) => {
-          const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Launch failed — check wallet SOL balances and try again";
+          const message = extractApiError(err);
           toast({ title: "Launch failed", description: message, variant: "destructive" });
         },
       }
     );
   };
 
+  const walletOptions = WALLET_COUNT_OPTIONS.filter(n => n <= Math.max(availableCount, 1));
+  if (walletOptions.length === 0) walletOptions.push(Math.min(1, availableCount) || 1);
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {network === "devnet" && <DevnetWarning lang={lang} />}
+
+      {/* Wallet availability notice */}
+      {walletAddress && availableCount < 5 && (
+        <div className="flex items-start gap-2 p-3 rounded-lg border border-orange-500/30 bg-orange-500/10 text-xs text-orange-400">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>
+            You have <strong>{availableCount}</strong> wallet{availableCount !== 1 ? "s" : ""}.
+            {availableCount === 0
+              ? " Generate wallets in the Wallets page before launching."
+              : " For a larger bundle, generate more wallets first."}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="tokenName" className="text-xs text-muted-foreground">{t("token_name")}</Label>
@@ -135,10 +212,12 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
           <Input id="tokenSymbol" placeholder="MEME" value={form.tokenSymbol} onChange={e => setForm(p => ({ ...p, tokenSymbol: e.target.value.toUpperCase() }))} />
         </div>
       </div>
+
       <div className="space-y-1.5">
         <Label htmlFor="tokenDescription" className="text-xs text-muted-foreground">{t("description")}</Label>
         <Textarea id="tokenDescription" placeholder="Token description..." rows={2} value={form.tokenDescription} onChange={e => setForm(p => ({ ...p, tokenDescription: e.target.value }))} />
       </div>
+
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">
           {t("token_image")} <span className="text-destructive">*</span>
@@ -146,25 +225,56 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
         <ImageUpload value={form.tokenImageUrl} onChange={url => setForm(p => ({ ...p, tokenImageUrl: url }))} />
         <p className="text-xs text-muted-foreground">{t("image_required")}</p>
       </div>
+
       <div className="space-y-2">
-        <Label className="text-xs text-muted-foreground">{t("bundled_wallets")}</Label>
+        <div className="flex items-center justify-between">
+          <Label className="text-xs text-muted-foreground">{t("bundled_wallets")}</Label>
+          {walletAddress && (
+            <span className="text-xs text-muted-foreground">{availableCount} available</span>
+          )}
+        </div>
         <div className="flex gap-2">
-          {WALLET_COUNT_OPTIONS.map(n => (
-            <button key={n} type="button" onClick={() => setForm(p => ({ ...p, walletCount: n }))}
-              className={cn("flex-1 py-2 rounded-lg border text-sm font-mono transition-all",
-                form.walletCount === n ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50")}>
-              {n}
-            </button>
-          ))}
+          {WALLET_COUNT_OPTIONS.map(n => {
+            const tooFew = availableCount > 0 && n > availableCount;
+            return (
+              <button
+                key={n}
+                type="button"
+                onClick={() => !tooFew && setForm(p => ({ ...p, walletCount: n }))}
+                disabled={tooFew}
+                className={cn(
+                  "flex-1 py-2 rounded-lg border text-sm font-mono transition-all",
+                  form.walletCount === n ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50",
+                  tooFew && "opacity-30 cursor-not-allowed"
+                )}
+              >
+                {n}
+              </button>
+            );
+          })}
         </div>
       </div>
+
       <div className="space-y-1.5">
         <Label htmlFor="solPerWallet" className="text-xs text-muted-foreground">{t("sol_per_wallet")}</Label>
-        <Input id="solPerWallet" type="number" step="0.01" min="0.01" value={form.solPerWallet} onChange={e => setForm(p => ({ ...p, solPerWallet: parseFloat(e.target.value) || 0 }))} />
-        <p className="text-xs text-muted-foreground">{t("total")}: {(form.walletCount * form.solPerWallet).toFixed(3)} SOL {t("across")} {form.walletCount} wallets</p>
+        <Input
+          id="solPerWallet"
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={form.solPerWallet}
+          onChange={e => setForm(p => ({ ...p, solPerWallet: parseFloat(e.target.value) || 0 }))}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("total")}: {(form.walletCount * form.solPerWallet).toFixed(3)} SOL {t("across")} {form.walletCount} wallets
+        </p>
       </div>
-      <Button type="submit" className="w-full" disabled={createBundle.isPending || !walletAddress}>
-        {createBundle.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</> : <><Rocket className="w-4 h-4 mr-2" /> {t("launch_bundle")}</>}
+
+      <Button type="submit" className="w-full" disabled={createBundle.isPending || !walletAddress || availableCount === 0}>
+        {createBundle.isPending
+          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</>
+          : <><Rocket className="w-4 h-4 mr-2" /> {t("launch_bundle")}</>
+        }
       </Button>
     </form>
   );
@@ -172,12 +282,19 @@ function NewBundleForm({ walletAddress }: { walletAddress: string | null }) {
 
 function VampForm({ walletAddress }: { walletAddress: string | null }) {
   const { toast } = useToast();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const { network } = useWallet();
   const createVamp = useCreateVampBundle();
   const [ca, setCa] = useState("");
   const [debouncedCa, setDebouncedCa] = useState("");
   const [walletCount, setWalletCount] = useState(10);
   const [solPerWallet, setSolPerWallet] = useState(0.1);
+
+  const { data: wallets } = useListWallets(
+    { ownerAddress: walletAddress ?? undefined },
+    { query: { enabled: !!walletAddress, queryKey: getListWalletsQueryKey({ ownerAddress: walletAddress ?? undefined }) } }
+  );
+  const availableCount = wallets?.length ?? 0;
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedCa(ca), 600);
@@ -193,13 +310,28 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
     e.preventDefault();
     if (!walletAddress) { toast({ title: t("connect_first"), variant: "destructive" }); return; }
     if (!ca) { toast({ title: t("source_token_ca"), variant: "destructive" }); return; }
+    if (availableCount < walletCount) {
+      toast({
+        title: "Not enough wallets",
+        description: `You have ${availableCount} wallets but selected ${walletCount}.`,
+        variant: "destructive",
+      });
+      return;
+    }
     createVamp.mutate(
-      { data: { ownerAddress: walletAddress, sourceTokenAddress: ca, walletCount, solPerWallet } },
       {
-        onSuccess: () => toast({ title: t("vamp_launch") + "!" }),
+        data: {
+          ownerAddress: walletAddress,
+          sourceTokenAddress: ca,
+          walletCount,
+          solPerWallet,
+          rpcEndpoint: RPC_ENDPOINTS[network],
+        },
+      },
+      {
+        onSuccess: () => toast({ title: t("vamp_launch") + " submitted!" }),
         onError: (err: unknown) => {
-          const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "VAMP failed";
-          toast({ title: "VAMP failed", description: message, variant: "destructive" });
+          toast({ title: "VAMP failed", description: extractApiError(err), variant: "destructive" });
         },
       }
     );
@@ -207,6 +339,8 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {network === "devnet" && <DevnetWarning lang={lang} />}
+
       <div className="space-y-1.5">
         <Label htmlFor="sourceCA" className="text-xs text-muted-foreground">{t("source_token_ca")}</Label>
         <div className="relative">
@@ -215,6 +349,7 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
           {meta && !metaLoading && <CheckCircle className="absolute right-3 top-2.5 w-4 h-4 text-green-400" />}
         </div>
       </div>
+
       {meta && (
         <div className="rounded-lg border border-border p-3 bg-card/50 space-y-1">
           <div className="flex items-center gap-2">
@@ -226,24 +361,51 @@ function VampForm({ walletAddress }: { walletAddress: string | null }) {
           </div>
         </div>
       )}
+
       <div className="space-y-2">
-        <Label className="text-xs text-muted-foreground">{t("bundled_wallets")}</Label>
+        <div className="flex items-center justify-between">
+          <Label className="text-xs text-muted-foreground">{t("bundled_wallets")}</Label>
+          {walletAddress && <span className="text-xs text-muted-foreground">{availableCount} available</span>}
+        </div>
         <div className="flex gap-2">
-          {WALLET_COUNT_OPTIONS.map(n => (
-            <button key={n} type="button" onClick={() => setWalletCount(n)}
-              className={cn("flex-1 py-2 rounded-lg border text-sm font-mono transition-all",
-                walletCount === n ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50")}>
-              {n}
-            </button>
-          ))}
+          {WALLET_COUNT_OPTIONS.map(n => {
+            const tooFew = availableCount > 0 && n > availableCount;
+            return (
+              <button
+                key={n}
+                type="button"
+                onClick={() => !tooFew && setWalletCount(n)}
+                disabled={tooFew}
+                className={cn(
+                  "flex-1 py-2 rounded-lg border text-sm font-mono transition-all",
+                  walletCount === n ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50",
+                  tooFew && "opacity-30 cursor-not-allowed"
+                )}
+              >
+                {n}
+              </button>
+            );
+          })}
         </div>
       </div>
+
       <div className="space-y-1.5">
         <Label htmlFor="vampSolPerWallet" className="text-xs text-muted-foreground">{t("sol_per_wallet")}</Label>
-        <Input id="vampSolPerWallet" type="number" step="0.01" min="0.01" value={solPerWallet} onChange={e => setSolPerWallet(parseFloat(e.target.value) || 0)} />
+        <Input
+          id="vampSolPerWallet"
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={solPerWallet}
+          onChange={e => setSolPerWallet(parseFloat(e.target.value) || 0)}
+        />
       </div>
+
       <Button type="submit" className="w-full" disabled={createVamp.isPending || !walletAddress || !ca}>
-        {createVamp.isPending ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</> : <><Copy className="w-4 h-4 mr-2" /> {t("vamp_launch")}</>}
+        {createVamp.isPending
+          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t("launching")}</>
+          : <><Copy className="w-4 h-4 mr-2" /> {t("vamp_launch")}</>
+        }
       </Button>
     </form>
   );
@@ -291,7 +453,12 @@ export default function LaunchPage() {
               </CardHeader>
               {!card.comingSoon && (
                 <CardContent className="pt-0">
-                  <Button variant={isActive ? "default" : "outline"} size="sm" className="w-full" onClick={(e) => { e.stopPropagation(); setActiveCard(isActive ? null : card.id); }}>
+                  <Button
+                    variant={isActive ? "default" : "outline"}
+                    size="sm"
+                    className="w-full"
+                    onClick={(e) => { e.stopPropagation(); setActiveCard(isActive ? null : card.id); }}
+                  >
                     {isActive ? t("close") : t("open")}
                   </Button>
                 </CardContent>
