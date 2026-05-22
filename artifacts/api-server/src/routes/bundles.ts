@@ -1,8 +1,9 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
-import { db, bundlesTable, activityTable, walletsTable, settingsTable } from "@workspace/db";
-import { Keypair } from "@solana/web3.js";
+import { db, bundlesTable, activityTable, walletsTable, settingsTable, bundleWalletsTable } from "@workspace/db";
+import { Keypair, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from "@solana/web3.js";
+import { getAccount, getAssociatedTokenAddressSync, createTransferInstruction } from "@solana/spl-token";
 import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt, airdropIfDevnet, getConnection } from "../lib/solana.js";
 import { launchDevnetBundle } from "../lib/devnet-launch.js";
 import {
@@ -13,7 +14,6 @@ import {
   GetBundleParams,
   DeleteBundleParams,
 } from "@workspace/api-zod";
-
 const router: IRouter = Router();
 
 const PRIORITY_FEES = { unitLimit: 250_000, unitPrice: 250_000 };
@@ -32,6 +32,16 @@ async function getOwnerWallets(ownerAddress: string, count: number) {
     .limit(count);
   if (wallets.length < count) throw new Error(`Not enough wallets stored. Need ${count}, have ${wallets.length}. Generate more wallets first.`);
   return wallets;
+}
+
+async function saveBundleWallets(bundleId: number, wallets: { publicKey: string }[], creatorIndex = 0) {
+  await db.insert(bundleWalletsTable).values(
+    wallets.map((w, i) => ({
+      bundleId,
+      walletPublicKey: w.publicKey,
+      isCreator: i === creatorIndex,
+    }))
+  );
 }
 
 // GET /bundles
@@ -58,7 +68,34 @@ router.get("/bundles", async (req, res): Promise<void> => {
   res.json(bundles);
 });
 
-// POST /bundles — REAL Pump.Fun token creation with bundle buys
+// GET /bundles/stats
+router.get("/bundles/stats", async (req, res): Promise<void> => {
+  const parsed = GetBundleStatsQueryParams.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  const conditions = parsed.data.ownerAddress ? [eq(bundlesTable.ownerAddress, parsed.data.ownerAddress)] : [];
+  const bundles = await db.select().from(bundlesTable).where(conditions.length ? and(...conditions) : undefined);
+
+  const totalLaunches = bundles.length;
+  const totalSolSpent = bundles.reduce((s, b) => s + (b.totalSolSpent ?? 0), 0);
+  const performances = bundles.filter(b => b.performanceUsd != null).map(b => b.performanceUsd!);
+  const bestLaunchUsd = performances.length ? Math.max(...performances) : 0;
+  const bestLaunchSol = bundles.filter(b => b.performanceSol != null).reduce((m, b) => Math.max(m, b.performanceSol!), 0);
+  const successRate = totalLaunches ? (bundles.filter(b => b.status === "active" || b.status === "completed").length / totalLaunches) * 100 : 0;
+  const avgWalletsPerBundle = totalLaunches ? bundles.reduce((s, b) => s + b.walletCount, 0) / totalLaunches : 0;
+
+  res.json({ totalLaunches, bestLaunchUsd, bestLaunchSol, totalSolSpent, successRate, avgWalletsPerBundle });
+});
+
+// GET /bundles/:id/wallets — list wallets that participated in a bundle
+router.get("/bundles/:id/wallets", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid bundle id" }); return; }
+  const rows = await db.select().from(bundleWalletsTable).where(eq(bundleWalletsTable.bundleId, id));
+  res.json(rows);
+});
+
+// POST /bundles — real Pump.Fun token creation with bundle buys
 router.post("/bundles", async (req, res): Promise<void> => {
   const parsed = CreateBundleBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
@@ -80,6 +117,8 @@ router.post("/bundles", async (req, res): Promise<void> => {
 
   const settingsRpc = await getRpcForOwner(ownerAddress);
   const rpcEndpoint = requestRpc ?? settingsRpc;
+  const isDevnet = !!(rpcEndpoint?.includes("devnet"));
+  const network = isDevnet ? "devnet" : "mainnet";
   const sdk = getPumpFunSDK(rpcEndpoint);
   const creatorWallet = wallets[0];
   const bundleWallets = wallets.slice(1);
@@ -89,7 +128,6 @@ router.post("/bundles", async (req, res): Promise<void> => {
   const sol = solPerWallet ?? 0.1;
   const buyAmountLamports = lamportsToBigInt(sol);
 
-  // Record bundle as pending
   const [bundle] = await db.insert(bundlesTable).values({
     ownerAddress,
     tokenName,
@@ -101,19 +139,17 @@ router.post("/bundles", async (req, res): Promise<void> => {
     totalSolSpent: sol * walletCount,
     status: "pending",
     launchType: "bundle",
+    network,
     tokenAddress: mintKeypair.publicKey.toString(),
   }).returning();
 
-  // Respond immediately so UI doesn't hang
+  await saveBundleWallets(bundle.id, wallets, 0);
+
   res.status(201).json(bundle);
 
-  // Execute asynchronously
   (async () => {
     try {
-      const isDevnet = !!(rpcEndpoint?.includes("devnet"));
-
       if (isDevnet) {
-        // Devnet: real SPL token + Raydium AMM pool (Pump.fun is mainnet-only)
         await airdropIfDevnet(rpcEndpoint, [creatorKeypair.publicKey, ...bundleWallets.map(w => { try { return keypairFromEncrypted(w.encryptedPrivateKey).publicKey; } catch { return creatorKeypair.publicKey; } })]);
 
         const devnetLog = (msg: string) => req.log?.info(msg);
@@ -133,6 +169,8 @@ router.post("/bundles", async (req, res): Promise<void> => {
           status: "active",
           txHash: primaryTx,
           tokenAddress: result.mintAddress,
+          poolId: result.poolId || null,
+          marketId: result.marketId || null,
         }).where(eq(bundlesTable.id, bundle.id));
 
         const poolNote = result.poolId ? ` | Pool: ${result.poolId.slice(0, 8)}...` : "";
@@ -148,9 +186,7 @@ router.post("/bundles", async (req, res): Promise<void> => {
         return;
       }
 
-      // Mainnet: real Pump.Fun launch
       const imageBlob = await urlToBlob(tokenImageUrl);
-
       const createResult = await sdk.createAndBuy(
         creatorKeypair,
         mintKeypair,
@@ -166,7 +202,6 @@ router.post("/bundles", async (req, res): Promise<void> => {
         throw new Error(msg);
       }
 
-      // Bundle wallet buys (sequential — for true Jito atomicity, upgrade to Jito bundle API)
       const signatures: string[] = [createResult.signature ?? ""];
       for (const w of bundleWallets) {
         try {
@@ -213,7 +248,6 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
 
   const { ownerAddress, sourceTokenAddress, walletCount, solPerWallet, rpcEndpoint: requestRpc } = parsed.data;
 
-  // Fetch real metadata from Pump.Fun
   let tokenName = "VAMP Copy";
   let tokenSymbol = "VAMP";
   let description = "";
@@ -228,7 +262,7 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
       description = meta.description ?? "";
       imageUrl = meta.image_uri ?? "";
     }
-  } catch { /* non-fatal */ }
+  } catch { }
 
   if (!imageUrl) {
     res.status(400).json({ error: "Could not fetch token image from Pump.Fun — provide a valid token address" });
@@ -245,6 +279,8 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
 
   const settingsRpc2 = await getRpcForOwner(ownerAddress);
   const vampRpc = requestRpc ?? settingsRpc2;
+  const isDevnet = !!(vampRpc?.includes("devnet"));
+  const network = isDevnet ? "devnet" : "mainnet";
   const sdk = getPumpFunSDK(vampRpc);
   const creatorKeypair = keypairFromEncrypted(wallets[0].encryptedPrivateKey);
   const mintKeypair = Keypair.generate();
@@ -262,17 +298,17 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
     totalSolSpent: sol * walletCount,
     status: "pending",
     launchType: "vamp",
+    network,
     tokenAddress: mintKeypair.publicKey.toString(),
   }).returning();
+
+  await saveBundleWallets(bundle.id, wallets, 0);
 
   res.status(201).json(bundle);
 
   (async () => {
     try {
-      const isDevnet = !!(vampRpc?.includes("devnet"));
-
       if (isDevnet) {
-        // Devnet: real SPL token + Raydium AMM pool
         const vampCreatorKeypair = keypairFromEncrypted(wallets[0].encryptedPrivateKey);
         const allWalletKeys = wallets.map(w => { try { return keypairFromEncrypted(w.encryptedPrivateKey).publicKey; } catch { return vampCreatorKeypair.publicKey; } });
         await airdropIfDevnet(vampRpc, allWalletKeys);
@@ -294,6 +330,8 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
           status: "active",
           txHash: vampPrimaryTx,
           tokenAddress: vampResult.mintAddress,
+          poolId: vampResult.poolId || null,
+          marketId: vampResult.marketId || null,
         }).where(eq(bundlesTable.id, bundle.id));
 
         const vampPoolNote = vampResult.poolId ? ` | Pool: ${vampResult.poolId.slice(0, 8)}...` : "";
@@ -309,7 +347,6 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
         return;
       }
 
-      // Mainnet: real Pump.Fun launch
       const imageBlob = await urlToBlob(imageUrl);
       const createResult = await sdk.createAndBuy(
         creatorKeypair,
@@ -330,7 +367,7 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
         try {
           const buyerKeypair = keypairFromEncrypted(w.encryptedPrivateKey);
           await sdk.buy(buyerKeypair, mintKeypair.publicKey, buyAmountLamports, SLIPPAGE_BASIS_POINTS, PRIORITY_FEES);
-        } catch { /* non-fatal */ }
+        } catch { }
       }
 
       await db.update(bundlesTable).set({ status: "active", txHash: createResult.signature ?? null })
@@ -350,23 +387,162 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
   })();
 });
 
-// GET /bundles/stats
-router.get("/bundles/stats", async (req, res): Promise<void> => {
-  const parsed = GetBundleStatsQueryParams.safeParse(req.query);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+// POST /bundles/:id/sell — sell tokens from bundle wallets and send SOL to recipient
+router.post("/bundles/:id/sell", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid bundle id" }); return; }
 
-  const conditions = parsed.data.ownerAddress ? [eq(bundlesTable.ownerAddress, parsed.data.ownerAddress)] : [];
-  const bundles = await db.select().from(bundlesTable).where(conditions.length ? and(...conditions) : undefined);
+  const { recipientAddress, walletPublicKey, rpcEndpoint: bodyRpc } = req.body as {
+    recipientAddress: string;
+    walletPublicKey?: string;
+    rpcEndpoint?: string;
+  };
+  if (!recipientAddress || typeof recipientAddress !== "string" || recipientAddress.length < 32) {
+    res.status(400).json({ error: "recipientAddress is required" });
+    return;
+  }
 
-  const totalLaunches = bundles.length;
-  const totalSolSpent = bundles.reduce((s, b) => s + (b.totalSolSpent ?? 0), 0);
-  const performances = bundles.filter(b => b.performanceUsd != null).map(b => b.performanceUsd!);
-  const bestLaunchUsd = performances.length ? Math.max(...performances) : 0;
-  const bestLaunchSol = bundles.filter(b => b.performanceSol != null).reduce((m, b) => Math.max(m, b.performanceSol!), 0);
-  const successRate = totalLaunches ? (bundles.filter(b => b.status === "active" || b.status === "completed").length / totalLaunches) * 100 : 0;
-  const avgWalletsPerBundle = totalLaunches ? bundles.reduce((s, b) => s + b.walletCount, 0) / totalLaunches : 0;
+  const [bundle] = await db.select().from(bundlesTable).where(eq(bundlesTable.id, id));
+  if (!bundle) { res.status(404).json({ error: "Bundle not found" }); return; }
+  if (!bundle.tokenAddress) { res.status(400).json({ error: "Bundle has no token address" }); return; }
 
-  res.json({ totalLaunches, bestLaunchUsd, bestLaunchSol, totalSolSpent, successRate, avgWalletsPerBundle });
+  const settingsRpc = await getRpcForOwner(bundle.ownerAddress);
+  const rpcEndpoint = bodyRpc ?? settingsRpc ?? (bundle.network === "devnet" ? "https://api.devnet.solana.com" : "https://api.mainnet-beta.solana.com");
+  const connection = getConnection(rpcEndpoint);
+  const mintPubkey = new PublicKey(bundle.tokenAddress);
+  const recipientPubkey = new PublicKey(recipientAddress);
+  const isDevnet = bundle.network === "devnet";
+
+  let bundleWalletRows = await db.select().from(bundleWalletsTable).where(eq(bundleWalletsTable.bundleId, id));
+  const creatorRow = bundleWalletRows.find(w => w.isCreator);
+
+  if (walletPublicKey) {
+    bundleWalletRows = bundleWalletRows.filter(w => w.walletPublicKey === walletPublicKey && !w.isCreator);
+  } else {
+    bundleWalletRows = bundleWalletRows.filter(w => !w.isCreator && !w.soldAt);
+  }
+
+  if (bundleWalletRows.length === 0) {
+    res.status(400).json({ error: "No unsold bundle wallets found" });
+    return;
+  }
+
+  const sold: { walletPublicKey: string; solAmount: number; txHash: string }[] = [];
+  const failed: { walletPublicKey: string; error: string }[] = [];
+
+  const sdk = isDevnet ? null : getPumpFunSDK(rpcEndpoint);
+
+  for (const bw of bundleWalletRows) {
+    try {
+      const walletRow = await db.select().from(walletsTable).where(eq(walletsTable.publicKey, bw.walletPublicKey)).limit(1);
+      if (!walletRow[0]) { failed.push({ walletPublicKey: bw.walletPublicKey, error: "Wallet not found in DB" }); continue; }
+
+      const walletKeypair = keypairFromEncrypted(walletRow[0].encryptedPrivateKey);
+
+      if (isDevnet) {
+        // Devnet: transfer tokens back to creator, sweep SOL to recipient
+        let tokenBalance = 0n;
+        try {
+          const ata = getAssociatedTokenAddressSync(mintPubkey, walletKeypair.publicKey);
+          const account = await getAccount(connection, ata);
+          tokenBalance = account.amount;
+        } catch { }
+
+        if (tokenBalance > 0n && creatorRow) {
+          try {
+            const bundleAta = getAssociatedTokenAddressSync(mintPubkey, walletKeypair.publicKey);
+            const creatorAta = getAssociatedTokenAddressSync(mintPubkey, new PublicKey(creatorRow.walletPublicKey));
+            await sendAndConfirmTransaction(
+              connection,
+              new Transaction().add(
+                createTransferInstruction(bundleAta, creatorAta, walletKeypair.publicKey, tokenBalance)
+              ),
+              [walletKeypair],
+              { commitment: "confirmed" }
+            );
+          } catch (err) {
+            req.log?.warn({ err }, "Token return failed, continuing SOL sweep");
+          }
+        }
+
+        const solBalance = await connection.getBalance(walletKeypair.publicKey);
+        const sweepLamports = solBalance - 5_000;
+        if (sweepLamports <= 0) {
+          await db.update(bundleWalletsTable).set({ soldAt: new Date() }).where(eq(bundleWalletsTable.id, bw.id));
+          sold.push({ walletPublicKey: bw.walletPublicKey, solAmount: 0, txHash: "" });
+          continue;
+        }
+
+        const sig = await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(SystemProgram.transfer({
+            fromPubkey: walletKeypair.publicKey,
+            toPubkey: recipientPubkey,
+            lamports: sweepLamports,
+          })),
+          [walletKeypair],
+          { commitment: "confirmed" }
+        );
+        await db.update(bundleWalletsTable).set({ soldAt: new Date() }).where(eq(bundleWalletsTable.id, bw.id));
+        sold.push({ walletPublicKey: bw.walletPublicKey, solAmount: sweepLamports / LAMPORTS_PER_SOL, txHash: sig });
+
+      } else {
+        // Mainnet: Pump.Fun sell
+        let tokenBalance = 0n;
+        try {
+          const ata = getAssociatedTokenAddressSync(mintPubkey, walletKeypair.publicKey);
+          const account = await getAccount(connection, ata);
+          tokenBalance = account.amount;
+        } catch { }
+
+        if (tokenBalance > 0n && sdk) {
+          const sellResult = await sdk.sell(walletKeypair, mintPubkey, tokenBalance, SLIPPAGE_BASIS_POINTS, PRIORITY_FEES);
+          if (!sellResult.success) throw new Error("Pump.Fun sell failed");
+        }
+
+        const solBalance = await connection.getBalance(walletKeypair.publicKey);
+        const sweepLamports = solBalance - 5_000;
+        let sweepSig = "";
+        if (sweepLamports > 0) {
+          sweepSig = await sendAndConfirmTransaction(
+            connection,
+            new Transaction().add(SystemProgram.transfer({
+              fromPubkey: walletKeypair.publicKey,
+              toPubkey: recipientPubkey,
+              lamports: sweepLamports,
+            })),
+            [walletKeypair],
+            { commitment: "confirmed" }
+          );
+        }
+
+        await db.update(bundleWalletsTable).set({ soldAt: new Date() }).where(eq(bundleWalletsTable.id, bw.id));
+        sold.push({ walletPublicKey: bw.walletPublicKey, solAmount: sweepLamports / LAMPORTS_PER_SOL, txHash: sweepSig });
+      }
+    } catch (err) {
+      failed.push({ walletPublicKey: bw.walletPublicKey, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  const allSold = await db.select().from(bundleWalletsTable)
+    .where(and(eq(bundleWalletsTable.bundleId, id), eq(bundleWalletsTable.isCreator, false)));
+  if (allSold.every(w => w.soldAt)) {
+    await db.update(bundlesTable).set({ status: "completed" }).where(eq(bundlesTable.id, id));
+  }
+
+  const totalSol = sold.reduce((s, w) => s + w.solAmount, 0);
+  if (sold.length > 0) {
+    await db.insert(activityTable).values({
+      ownerAddress: bundle.ownerAddress,
+      type: "sell",
+      description: `Sold ${sold.length} wallet(s) from ${bundle.tokenName} (${bundle.tokenSymbol}) — ${totalSol.toFixed(4)} SOL returned to ${recipientAddress.slice(0, 8)}...`,
+      tokenName: bundle.tokenName,
+      tokenSymbol: bundle.tokenSymbol,
+      amount: totalSol,
+    });
+  }
+
+  res.json({ sold, failed });
 });
 
 // GET /bundles/:id

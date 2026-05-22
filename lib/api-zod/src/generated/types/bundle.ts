@@ -24,6 +24,11 @@ export interface Bundle {
   totalSolSpent?: number | null;
   status: string;
   launchType: string;
+  network: string;
+  /** @nullable */
+  poolId?: string | null;
+  /** @nullable */
+  marketId?: string | null;
   /** @nullable */
   performanceUsd?: number | null;
   /** @nullable */

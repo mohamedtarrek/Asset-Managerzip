@@ -117,6 +117,11 @@ export interface Bundle {
   totalSolSpent?: number | null;
   status: string;
   launchType: string;
+  network: string;
+  /** @nullable */
+  poolId?: string | null;
+  /** @nullable */
+  marketId?: string | null;
   /** @nullable */
   performanceUsd?: number | null;
   /** @nullable */
@@ -125,6 +130,16 @@ export interface Bundle {
   txHash?: string | null;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface BundleWallet {
+  id: number;
+  bundleId: number;
+  walletPublicKey: string;
+  isCreator: boolean;
+  /** @nullable */
+  soldAt?: string | null;
+  createdAt: string;
 }
 
 export interface BundleInput {

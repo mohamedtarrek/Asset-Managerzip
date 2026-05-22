@@ -18,6 +18,9 @@ export const bundlesTable = pgTable("bundles", {
   performanceUsd: real("performance_usd"),
   performanceSol: real("performance_sol"),
   txHash: text("tx_hash"),
+  network: text("network").notNull().default("mainnet"),
+  poolId: text("pool_id"),
+  marketId: text("market_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

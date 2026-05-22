@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Search, Package, Trash2, ExternalLink, TrendingUp, Loader2, Rocket } from "lucide-react";
+import { Search, Package, Trash2, ExternalLink, TrendingUp, Loader2, Rocket, ChevronDown, ChevronUp, Wallet, DollarSign } from "lucide-react";
 import { Link } from "wouter";
 import { useWallet } from "@/lib/wallet-context";
 import { useListBundles, useGetBundleStats, useDeleteBundle, getListBundlesQueryKey, getGetBundleStatsQueryKey } from "@workspace/api-client-react";
+import type { Bundle, BundleWallet } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
+import { BASE_URL } from "@/lib/base-url";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "text-green-400 border-green-400/30 bg-green-400/5",
@@ -19,61 +21,244 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "text-red-400 border-red-400/30 bg-red-400/5",
 };
 
-function BundleRow({ bundle, onDelete }: {
-  bundle: { id: number; tokenName: string; tokenSymbol: string; tokenAddress?: string | null; walletCount: number; solPerWallet?: number | null; totalSolSpent?: number | null; status: string; launchType: string; performanceUsd?: number | null; createdAt: string; };
-  onDelete: (id: number) => void;
+function tradeUrl(bundle: Bundle): string {
+  if (!bundle.tokenAddress) return "#";
+  if (bundle.network === "devnet") {
+    return `https://explorer.solana.com/address/${bundle.tokenAddress}?cluster=devnet`;
+  }
+  return `https://pump.fun/coin/${bundle.tokenAddress}`;
+}
+
+function tradeLinkLabel(bundle: Bundle): string {
+  if (bundle.network === "devnet") return "View on Solana Explorer (Devnet)";
+  return "View on Pump.fun";
+}
+
+function WalletList({ bundle, onSellComplete }: {
+  bundle: Bundle;
+  onSellComplete: () => void;
 }) {
+  const { walletAddress } = useWallet();
+  const { toast } = useToast();
+  const [wallets, setWallets] = useState<BundleWallet[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sellingAll, setSellingAll] = useState(false);
+  const [sellingWallet, setSellingWallet] = useState<string | null>(null);
+
+  const fetchWallets = async () => {
+    setLoading(true);
+    try {
+      const resp = await fetch(`${BASE_URL}api/bundles/${bundle.id}/wallets`);
+      const data = await resp.json();
+      setWallets(data);
+    } catch {
+      toast({ title: "Failed to load wallets", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!wallets && !loading) {
+    fetchWallets();
+  }
+
+  const doSell = async (walletPublicKey?: string) => {
+    if (!walletAddress) {
+      toast({ title: "Connect your Phantom wallet first", variant: "destructive" });
+      return;
+    }
+    const settingsRpc = bundle.network === "devnet" ? "https://api.devnet.solana.com" : undefined;
+    const body: Record<string, string> = { recipientAddress: walletAddress };
+    if (walletPublicKey) body.walletPublicKey = walletPublicKey;
+    if (settingsRpc) body.rpcEndpoint = settingsRpc;
+
+    const resp = await fetch(`${BASE_URL}api/bundles/${bundle.id}/sell`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error ?? "Sell failed");
+    return data as { sold: { walletPublicKey: string; solAmount: number; txHash: string }[]; failed: { walletPublicKey: string; error: string }[] };
+  };
+
+  const handleSellOne = async (walletPublicKey: string) => {
+    setSellingWallet(walletPublicKey);
+    try {
+      const result = await doSell(walletPublicKey);
+      if (result?.sold.length) {
+        toast({ title: `Sold — ${result.sold[0].solAmount.toFixed(4)} SOL sent to your wallet` });
+        onSellComplete();
+        fetchWallets();
+      } else {
+        toast({ title: result?.failed[0]?.error ?? "Sell failed", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : "Sell failed", variant: "destructive" });
+    } finally {
+      setSellingWallet(null);
+    }
+  };
+
+  const handleSellAll = async () => {
+    setSellingAll(true);
+    try {
+      const result = await doSell();
+      if (result?.sold.length) {
+        const totalSol = result.sold.reduce((s, w) => s + w.solAmount, 0);
+        toast({ title: `Sold ${result.sold.length} wallet(s) — ${totalSol.toFixed(4)} SOL sent to your wallet` });
+        onSellComplete();
+        fetchWallets();
+      } else {
+        toast({ title: result?.failed[0]?.error ?? "Nothing to sell", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : "Sell all failed", variant: "destructive" });
+    } finally {
+      setSellingAll(false);
+    }
+  };
+
+  const bundleWallets = (wallets ?? []).filter(w => !w.isCreator);
+  const unsoldCount = bundleWallets.filter(w => !w.soldAt).length;
+
   return (
-    <div className="flex items-center gap-4 p-4 border border-border rounded-lg bg-card/30 hover:bg-card/60 transition-colors" data-testid={`bundle-row-${bundle.id}`}>
-      <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-        style={{ background: "hsl(270 100% 60% / 0.15)" }}>
-        <Rocket className="w-5 h-5" style={{ color: "hsl(270 100% 65%)" }} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-semibold truncate">{bundle.tokenName}</p>
-          <span className="text-xs text-muted-foreground font-mono">{bundle.tokenSymbol}</span>
-          <Badge variant="outline" className={cn("text-xs", STATUS_COLORS[bundle.status])}>{bundle.status}</Badge>
-          <Badge variant="outline" className="text-xs text-muted-foreground">{bundle.launchType.toUpperCase()}</Badge>
-        </div>
-        {bundle.tokenAddress && (
-          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{bundle.tokenAddress}</p>
+    <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider flex items-center gap-1.5">
+          <Wallet className="w-3.5 h-3.5" /> Bundle Wallets
+        </p>
+        {unsoldCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs border-green-500/30 text-green-400 hover:bg-green-500/10"
+            onClick={handleSellAll}
+            disabled={sellingAll}
+            data-testid={`button-sell-all-${bundle.id}`}
+          >
+            {sellingAll ? <Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> : <DollarSign className="w-3 h-3 mr-1.5" />}
+            Sell All ({unsoldCount})
+          </Button>
         )}
       </div>
-      <div className="hidden md:flex items-center gap-6 text-sm shrink-0">
-        <div className="text-right">
-          <p className="text-xs text-muted-foreground">Wallets</p>
-          <p className="font-mono font-semibold">{bundle.walletCount}</p>
+
+      {loading && (
+        <div className="space-y-1.5">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9 w-full" />)}
         </div>
-        <div className="text-right">
-          <p className="text-xs text-muted-foreground">SOL Spent</p>
-          <p className="font-mono font-semibold">{(bundle.totalSolSpent ?? 0).toFixed(3)}</p>
-        </div>
-        {bundle.performanceUsd != null && (
-          <div className="text-right">
-            <p className="text-xs text-muted-foreground">Performance</p>
-            <p className={cn("font-mono font-semibold", bundle.performanceUsd >= 0 ? "text-green-400" : "text-red-400")}>
-              ${bundle.performanceUsd.toFixed(2)}
-            </p>
+      )}
+
+      {!loading && bundleWallets.length === 0 && (
+        <p className="text-xs text-muted-foreground py-2">No bundle wallets recorded (older launch)</p>
+      )}
+
+      {!loading && bundleWallets.map(bw => (
+        <div key={bw.id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-muted/20 text-xs">
+          <div className="flex-1 min-w-0">
+            <span className="font-mono text-muted-foreground truncate block">
+              {bw.walletPublicKey.slice(0, 12)}...{bw.walletPublicKey.slice(-6)}
+            </span>
           </div>
-        )}
-        <div className="text-right">
-          <p className="text-xs text-muted-foreground">Launched</p>
-          <p className="text-xs font-mono">{new Date(bundle.createdAt).toLocaleDateString()}</p>
+          {bw.soldAt ? (
+            <Badge variant="outline" className="text-xs text-blue-400 border-blue-400/30 bg-blue-400/5 shrink-0">sold</Badge>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 text-xs shrink-0 border-green-500/30 text-green-400 hover:bg-green-500/10"
+              onClick={() => handleSellOne(bw.walletPublicKey)}
+              disabled={sellingWallet === bw.walletPublicKey || sellingAll}
+            >
+              {sellingWallet === bw.walletPublicKey
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : "Sell"}
+            </Button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BundleRow({ bundle, onDelete, onRefresh }: {
+  bundle: Bundle;
+  onDelete: (id: number) => void;
+  onRefresh: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="border border-border rounded-lg bg-card/30 hover:bg-card/60 transition-colors" data-testid={`bundle-row-${bundle.id}`}>
+      <div className="flex items-center gap-4 p-4">
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: "hsl(270 100% 60% / 0.15)" }}>
+          <Rocket className="w-5 h-5" style={{ color: "hsl(270 100% 65%)" }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold truncate">{bundle.tokenName}</p>
+            <span className="text-xs text-muted-foreground font-mono">{bundle.tokenSymbol}</span>
+            <Badge variant="outline" className={cn("text-xs", STATUS_COLORS[bundle.status])}>{bundle.status}</Badge>
+            <Badge variant="outline" className="text-xs text-muted-foreground">{bundle.launchType.toUpperCase()}</Badge>
+            {bundle.network === "devnet" && (
+              <Badge variant="outline" className="text-xs text-orange-400 border-orange-400/30 bg-orange-400/5">DEVNET</Badge>
+            )}
+          </div>
+          {bundle.tokenAddress && (
+            <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate">{bundle.tokenAddress}</p>
+          )}
+        </div>
+        <div className="hidden md:flex items-center gap-6 text-sm shrink-0">
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">Wallets</p>
+            <p className="font-mono font-semibold">{bundle.walletCount}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">SOL Spent</p>
+            <p className="font-mono font-semibold">{(bundle.totalSolSpent ?? 0).toFixed(3)}</p>
+          </div>
+          {bundle.performanceUsd != null && (
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Performance</p>
+              <p className={cn("font-mono font-semibold", bundle.performanceUsd >= 0 ? "text-green-400" : "text-red-400")}>
+                ${bundle.performanceUsd.toFixed(2)}
+              </p>
+            </div>
+          )}
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">Launched</p>
+            <p className="text-xs font-mono">{new Date(bundle.createdAt).toLocaleDateString()}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {bundle.tokenAddress && (
+            <a href={tradeUrl(bundle)} target="_blank" rel="noopener noreferrer" title={tradeLinkLabel(bundle)}>
+              <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground" data-testid={`button-open-trade-${bundle.id}`}>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Button>
+            </a>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="w-8 h-8 text-muted-foreground hover:text-foreground"
+            onClick={() => setExpanded(e => !e)}
+            data-testid={`button-expand-${bundle.id}`}
+          >
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </Button>
+          <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-destructive" onClick={() => onDelete(bundle.id)} data-testid={`button-delete-bundle-${bundle.id}`}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
         </div>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        {bundle.tokenAddress && (
-          <a href={`https://pump.fun/${bundle.tokenAddress}`} target="_blank" rel="noopener noreferrer">
-            <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-foreground" data-testid={`button-open-pump-${bundle.id}`}>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </Button>
-          </a>
-        )}
-        <Button variant="ghost" size="icon" className="w-8 h-8 text-muted-foreground hover:text-destructive" onClick={() => onDelete(bundle.id)} data-testid={`button-delete-bundle-${bundle.id}`}>
-          <Trash2 className="w-3.5 h-3.5" />
-        </Button>
-      </div>
+
+      {expanded && (
+        <div className="px-4 pb-4">
+          <WalletList bundle={bundle} onSellComplete={onRefresh} />
+        </div>
+      )}
     </div>
   );
 }
@@ -99,6 +284,11 @@ export default function BundlesPage() {
     });
   };
 
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: getListBundlesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetBundleStatsQueryKey() });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -113,7 +303,6 @@ export default function BundlesPage() {
         </Link>
       </div>
 
-      {/* Stats */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
@@ -137,13 +326,11 @@ export default function BundlesPage() {
         </div>
       )}
 
-      {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
         <Input placeholder="Search bundles by name or token address..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} data-testid="input-search-bundles" />
       </div>
 
-      {/* Bundle List */}
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
@@ -151,7 +338,7 @@ export default function BundlesPage() {
       ) : bundles && bundles.length > 0 ? (
         <div className="space-y-2">
           {bundles.map(bundle => (
-            <BundleRow key={bundle.id} bundle={bundle} onDelete={handleDelete} />
+            <BundleRow key={bundle.id} bundle={bundle} onDelete={handleDelete} onRefresh={handleRefresh} />
           ))}
         </div>
       ) : (
