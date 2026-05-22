@@ -7,6 +7,7 @@ import dashboardRouter from "./dashboard";
 import tokensRouter from "./tokens";
 import portfolioRouter from "./portfolio";
 import githubRouter from "./github";
+import githubTokenRouter from "./github-token";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(dashboardRouter);
 router.use(tokensRouter);
 router.use(portfolioRouter);
 router.use(githubRouter);
+router.use(githubTokenRouter);
 
 export default router;

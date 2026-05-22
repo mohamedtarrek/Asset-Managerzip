@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Settings, User, Bell, Zap, Activity, Save, Loader2 } from "lucide-react";
+import { Settings, User, Bell, Zap, Activity, Save, Loader2, Github, CheckCircle, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { useWallet } from "@/lib/wallet-context";
 import { useGetSettings, useUpdateSettings, getGetSettingsQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
+import { BASE_URL } from "@/lib/base-url";
 
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
@@ -21,6 +22,129 @@ function SettingRow({ label, description, children }: { label: string; descripti
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
       {children}
+    </div>
+  );
+}
+
+function GithubTokenSection({ walletAddress }: { walletAddress: string }) {
+  const { toast } = useToast();
+  const [token, setToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
+
+  const { data: status, refetch: refetchStatus } = useQuery({
+    queryKey: ["github-token-status", walletAddress],
+    queryFn: async () => {
+      const resp = await fetch(`${BASE_URL}api/settings/github-token/status?walletAddress=${walletAddress}`);
+      return resp.json() as Promise<{ hasToken: boolean; source: string }>;
+    },
+    staleTime: 30_000,
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (t: string) => {
+      const resp = await fetch(`${BASE_URL}api/settings/github-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress, token: t }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "Failed to save token");
+      return data as { success: boolean; hasToken: boolean };
+    },
+    onSuccess: (data) => {
+      refetchStatus();
+      setToken("");
+      toast({
+        title: data.hasToken ? "GitHub token saved" : "GitHub token cleared",
+        description: data.hasToken
+          ? "Push to GitHub is now enabled."
+          : "Token has been removed.",
+      });
+    },
+    onError: (err) => {
+      toast({ title: err instanceof Error ? err.message : "Failed to save token", variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 pb-2 border-b border-border/50">
+        <Github className="w-4 h-4 text-muted-foreground" />
+        <div>
+          <p className="text-sm font-medium">GitHub Integration</p>
+          <p className="text-xs text-muted-foreground">Enable "Push to GitHub" from the Dashboard</p>
+        </div>
+        <div className="ml-auto">
+          {status?.hasToken ? (
+            <Badge variant="outline" className="text-green-400 border-green-400/30 bg-green-400/5 gap-1">
+              <CheckCircle className="w-3 h-3" /> Connected
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-yellow-400 border-yellow-400/30 bg-yellow-400/5">
+              Not configured
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-xs text-muted-foreground">
+          Personal Access Token{" "}
+          <a
+            href="https://github.com/settings/tokens/new?scopes=repo&description=Svarog+App"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline inline-flex items-center gap-0.5"
+          >
+            Generate one <ExternalLink className="w-2.5 h-2.5" />
+          </a>
+        </Label>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Input
+              type={showToken ? "text" : "password"}
+              placeholder={status?.hasToken ? "••••••••••••••• (token saved)" : "ghp_xxxxxxxxxxxxxxxxxxxx"}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              className="pr-10 font-mono text-sm"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowToken((v) => !v)}
+            >
+              {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <Button
+            onClick={() => saveMutation.mutate(token)}
+            disabled={saveMutation.isPending || !token.trim()}
+            size="sm"
+            className="shrink-0"
+          >
+            {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+            Save
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Requires <code className="bg-muted px-1 rounded">repo</code> scope. Token is stored encrypted in your database and never exposed.
+        </p>
+      </div>
+
+      {status?.hasToken && (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10"
+            onClick={() => saveMutation.mutate("")}
+            disabled={saveMutation.isPending}
+          >
+            Remove token
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -107,6 +231,7 @@ export default function SettingsPage() {
         <TabsList className="mb-6">
           <TabsTrigger value="account" data-testid="tab-account"><User className="w-3.5 h-3.5 mr-1.5" /> Account</TabsTrigger>
           <TabsTrigger value="general" data-testid="tab-general"><Settings className="w-3.5 h-3.5 mr-1.5" /> General</TabsTrigger>
+          <TabsTrigger value="integrations"><Github className="w-3.5 h-3.5 mr-1.5" /> Integrations</TabsTrigger>
           <TabsTrigger value="quick-actions" data-testid="tab-quick-actions"><Zap className="w-3.5 h-3.5 mr-1.5" /> Quick Actions</TabsTrigger>
           <TabsTrigger value="activity" data-testid="tab-activity"><Activity className="w-3.5 h-3.5 mr-1.5" /> Activity</TabsTrigger>
         </TabsList>
@@ -157,6 +282,17 @@ export default function SettingsPage() {
               <SettingRow label="Custom RPC Endpoint" description="Use your own Solana RPC (leave blank to use default devnet)">
                 <Input placeholder="https://your-rpc..." className="w-64" value={form.rpcEndpoint} onChange={e => setForm(p => ({ ...p, rpcEndpoint: e.target.value }))} data-testid="input-rpc-endpoint" />
               </SettingRow>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="integrations">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold">Integrations</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <GithubTokenSection walletAddress={walletAddress} />
             </CardContent>
           </Card>
         </TabsContent>

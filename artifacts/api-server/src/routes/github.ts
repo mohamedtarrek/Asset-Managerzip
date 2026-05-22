@@ -2,18 +2,28 @@ import { Router } from "express";
 import type { IRouter } from "express";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { db, settingsTable } from "@workspace/db";
 
 const router: IRouter = Router();
 const execAsync = promisify(exec);
 const WORKSPACE = "/home/runner/workspace";
 
+async function getGithubToken(): Promise<string | null> {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  const [row] = await db
+    .select({ githubToken: settingsTable.githubToken })
+    .from(settingsTable)
+    .limit(1);
+  return row?.githubToken ?? null;
+}
+
 // POST /github/push — commit and push workspace changes to a GitHub repo
 router.post("/github/push", async (req, res): Promise<void> => {
-  const token = process.env.GITHUB_TOKEN;
+  const token = await getGithubToken();
   if (!token) {
     res.status(400).json({
-      error: "GITHUB_TOKEN not set",
-      hint: "Add GITHUB_TOKEN to your project secrets (Settings → Secrets). Generate one at https://github.com/settings/tokens with repo scope.",
+      error: "GITHUB_TOKEN not configured",
+      hint: "Go to Settings → Integrations and enter your GitHub Personal Access Token. Generate one at https://github.com/settings/tokens with repo scope.",
     });
     return;
   }

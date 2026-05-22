@@ -11,6 +11,7 @@ export const settingsTable = pgTable("settings", {
   darkMode: boolean("dark_mode").notNull().default(true),
   notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
   rpcEndpoint: text("rpc_endpoint"),
+  githubToken: text("github_token"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
