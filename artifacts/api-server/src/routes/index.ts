@@ -5,6 +5,7 @@ import bundlesRouter from "./bundles";
 import botsRouter from "./bots";
 import dashboardRouter from "./dashboard";
 import tokensRouter from "./tokens";
+import portfolioRouter from "./portfolio";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(bundlesRouter);
 router.use(botsRouter);
 router.use(dashboardRouter);
 router.use(tokensRouter);
+router.use(portfolioRouter);
 
 export default router;

@@ -14,6 +14,7 @@ import {
   Loader2,
   Globe,
   FlaskConical,
+  CoinsIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet-context";
@@ -43,6 +44,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/dashboard", label: t("nav_dashboard"), icon: LayoutDashboard },
     { href: "/launch", label: t("nav_launch"), icon: Rocket },
     { href: "/bundles", label: t("nav_bundles"), icon: Package },
+    { href: "/portfolio", label: "Portfolio", icon: CoinsIcon },
     { href: "/wallets", label: t("nav_wallets"), icon: Wallet },
     { href: "/bump-bot", label: t("nav_bumpbot"), icon: Bot },
     { href: "/settings", label: t("nav_settings"), icon: Settings },

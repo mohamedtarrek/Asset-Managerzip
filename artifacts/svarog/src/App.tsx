@@ -11,6 +11,7 @@ import BundlesPage from "@/pages/bundles";
 import WalletsPage from "@/pages/wallets";
 import BumpBotPage from "@/pages/bump-bot";
 import SettingsPage from "@/pages/settings";
+import PortfolioPage from "@/pages/portfolio";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -56,6 +57,11 @@ function Router() {
       <Route path="/settings">
         <Layout>
           <SettingsPage />
+        </Layout>
+      </Route>
+      <Route path="/portfolio">
+        <Layout>
+          <PortfolioPage />
         </Layout>
       </Route>
       <Route component={NotFound} />
