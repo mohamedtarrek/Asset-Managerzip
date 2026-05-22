@@ -64,6 +64,14 @@ export async function getSolBalance(publicKey: string, rpcEndpoint?: string | nu
 }
 
 export async function urlToBlob(url: string): Promise<Blob> {
+  // Handle base64 data URIs from frontend file upload
+  if (url.startsWith("data:")) {
+    const [header, base64] = url.split(",");
+    const mimeMatch = header.match(/data:([^;]+)/);
+    const mime = mimeMatch ? mimeMatch[1] : "image/png";
+    const buffer = Buffer.from(base64, "base64");
+    return new Blob([buffer], { type: mime });
+  }
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`);
   return resp.blob();

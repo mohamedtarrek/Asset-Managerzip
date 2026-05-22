@@ -1,9 +1,18 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 
+export type Network = "mainnet" | "devnet";
+
+export const RPC_ENDPOINTS: Record<Network, string> = {
+  mainnet: "https://api.mainnet-beta.solana.com",
+  devnet: "https://api.devnet.solana.com",
+};
+
 interface WalletContextType {
   walletAddress: string | null;
   isConnecting: boolean;
   hasPhantom: boolean;
+  network: Network;
+  setNetwork: (n: Network) => void;
   connect: () => Promise<void>;
   disconnect: () => void;
   setManualAddress: (address: string) => void;
@@ -26,6 +35,8 @@ const WalletContext = createContext<WalletContextType>({
   walletAddress: null,
   isConnecting: false,
   hasPhantom: false,
+  network: "mainnet",
+  setNetwork: () => {},
   connect: async () => {},
   disconnect: () => {},
   setManualAddress: () => {},
@@ -37,6 +48,15 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
   const [walletAddress, setWalletAddressState] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [hasPhantom, setHasPhantom] = useState(false);
+  const [network, setNetworkState] = useState<Network>(() => {
+    const saved = localStorage.getItem("svarog_network");
+    return saved === "devnet" ? "devnet" : "mainnet";
+  });
+
+  const setNetwork = useCallback((n: Network) => {
+    setNetworkState(n);
+    localStorage.setItem("svarog_network", n);
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
@@ -79,7 +99,6 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
       setWalletAddressState(addr);
       localStorage.setItem("svarog_wallet_address", addr);
     } catch {
-      // user rejected
     } finally {
       setIsConnecting(false);
     }
@@ -101,7 +120,7 @@ export const WalletProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   return (
-    <WalletContext.Provider value={{ walletAddress, isConnecting, hasPhantom, connect, disconnect, setManualAddress }}>
+    <WalletContext.Provider value={{ walletAddress, isConnecting, hasPhantom, network, setNetwork, connect, disconnect, setManualAddress }}>
       {children}
     </WalletContext.Provider>
   );

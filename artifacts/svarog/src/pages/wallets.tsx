@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Plus, Download, Trash2, Wallet, CheckSquare, Square, Loader2, RefreshCw, Eye, EyeOff, Copy } from "lucide-react";
 import { useWallet } from "@/lib/wallet-context";
+import { useI18n } from "@/lib/i18n";
 import { useListWallets, useCreateWallet, useImportWallet, useGenerateBulkWallets, useDeleteWallet, useListWalletGroups, useGetWalletPrivateKey, getGetWalletPrivateKeyQueryKey, getListWalletsQueryKey, getListWalletGroupsQueryKey } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,7 +72,7 @@ function WalletRow({ wallet, selected, onSelect, onDelete }: {
   return (
     <div className={cn("p-3 border rounded-lg transition-all", selected ? "border-primary bg-primary/5" : "border-border bg-card/30 hover:bg-card/60")} data-testid={`wallet-row-${wallet.id}`}>
       <div className="flex items-center gap-3">
-        <button onClick={onSelect} className="shrink-0 text-muted-foreground hover:text-primary transition-colors" data-testid={`checkbox-wallet-${wallet.id}`}>
+        <button onClick={onSelect} className="shrink-0 text-muted-foreground hover:text-primary transition-colors">
           {selected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
         </button>
         <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: "hsl(270 100% 60% / 0.12)" }}>
@@ -102,12 +103,14 @@ function WalletRow({ wallet, selected, onSelect, onDelete }: {
 
 export default function WalletsPage() {
   const { walletAddress } = useWallet();
+  const { t } = useI18n();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [deletingBulk, setDeletingBulk] = useState(false);
   const [importKey, setImportKey] = useState("");
   const [importLabel, setImportLabel] = useState("");
   const [importGroup, setImportGroup] = useState("");
@@ -131,31 +134,55 @@ export default function WalletsPage() {
   };
 
   const handleGenerate = () => {
-    if (!walletAddress) { toast({ title: "Connect wallet first", variant: "destructive" }); return; }
+    if (!walletAddress) { toast({ title: t("connect_first"), variant: "destructive" }); return; }
     createWallet.mutate({ data: { ownerAddress: walletAddress } }, {
-      onSuccess: () => { toast({ title: "Wallet generated" }); invalidate(); },
+      onSuccess: () => { toast({ title: t("wallet_generated") }); invalidate(); },
     });
   };
 
   const handleImport = () => {
-    if (!walletAddress || !importKey) { toast({ title: "Private key required", variant: "destructive" }); return; }
+    if (!walletAddress || !importKey) { toast({ title: t("private_key_label"), variant: "destructive" }); return; }
     importWallet.mutate({ data: { ownerAddress: walletAddress, privateKey: importKey, label: importLabel || undefined, group: importGroup || undefined } }, {
-      onSuccess: () => { toast({ title: "Wallet imported" }); setImportOpen(false); setImportKey(""); invalidate(); },
-      onError: () => toast({ title: "Invalid private key", variant: "destructive" }),
+      onSuccess: () => { toast({ title: t("wallet_imported") }); setImportOpen(false); setImportKey(""); invalidate(); },
+      onError: () => toast({ title: t("invalid_key"), variant: "destructive" }),
     });
   };
 
   const handleBulkGenerate = () => {
-    if (!walletAddress) { toast({ title: "Connect wallet first", variant: "destructive" }); return; }
+    if (!walletAddress) { toast({ title: t("connect_first"), variant: "destructive" }); return; }
     generateBulk.mutate({ data: { ownerAddress: walletAddress, count: bulkCount, group: bulkGroup || undefined } }, {
-      onSuccess: (ws) => { toast({ title: `Generated ${ws.length} wallets` }); setBulkOpen(false); invalidate(); },
+      onSuccess: (ws) => { toast({ title: `${t("generated_wallets")} ${ws.length}` }); setBulkOpen(false); invalidate(); },
     });
   };
 
   const handleDelete = (id: number) => {
     deleteWallet.mutate({ id }, {
-      onSuccess: () => { toast({ title: "Wallet deleted" }); invalidate(); selected.delete(id); setSelected(new Set(selected)); },
+      onSuccess: () => {
+        toast({ title: t("wallet_deleted") });
+        invalidate();
+        selected.delete(id);
+        setSelected(new Set(selected));
+      },
     });
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.size === 0) return;
+    setDeletingBulk(true);
+    const ids = Array.from(selected);
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          deleteWallet.mutate({ id }, { onSuccess: () => resolve(), onError: reject });
+        });
+        deleted++;
+      } catch { /* continue */ }
+    }
+    setSelected(new Set());
+    invalidate();
+    setDeletingBulk(false);
+    toast({ title: `${deleted} ${t("wallets_deleted")}` });
   };
 
   const toggleSelect = (id: number) => {
@@ -176,19 +203,19 @@ export default function WalletsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Wallets</h1>
-          <p className="text-sm text-muted-foreground">Manage your Solana keypairs</p>
+          <h1 className="text-2xl font-bold text-foreground">{t("wallets_title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("wallets_subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)} data-testid="button-bulk-generate">
-            <RefreshCw className="w-4 h-4 mr-2" /> Bulk Generate
+          <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
+            <RefreshCw className="w-4 h-4 mr-2" /> {t("bulk_generate")}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)} data-testid="button-import-wallet">
-            <Download className="w-4 h-4 mr-2" /> Import
+          <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+            <Download className="w-4 h-4 mr-2" /> {t("import_wallet")}
           </Button>
-          <Button size="sm" onClick={handleGenerate} disabled={createWallet.isPending} data-testid="button-generate-wallet">
+          <Button size="sm" onClick={handleGenerate} disabled={createWallet.isPending}>
             {createWallet.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
-            Generate
+            {t("generate")}
           </Button>
         </div>
       </div>
@@ -197,34 +224,49 @@ export default function WalletsPage() {
       <Card>
         <CardContent className="p-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Storage Usage</span>
-            <span className="font-mono font-semibold">{count}/{MAX_WALLETS} used</span>
+            <span className="text-muted-foreground">{t("storage_usage")}</span>
+            <span className="font-mono font-semibold">{count}/{MAX_WALLETS} {t("used")}</span>
           </div>
           <Progress value={(count / MAX_WALLETS) * 100} className="h-2" />
-          <p className="text-xs text-muted-foreground">{MAX_WALLETS - count} wallet slots remaining</p>
+          <p className="text-xs text-muted-foreground">{MAX_WALLETS - count} {t("wallet_slots_remaining")}</p>
         </CardContent>
       </Card>
 
-      {/* Filters */}
+      {/* Filters & bulk actions */}
       <div className="flex items-center gap-3">
-        {selected.size > 0 && (
-          <Button variant="outline" size="sm" onClick={toggleAll} className="shrink-0">
-            {selected.size === count ? "Deselect All" : `${selected.size} selected`}
-          </Button>
-        )}
         <Select value={groupFilter} onValueChange={setGroupFilter}>
-          <SelectTrigger className="w-40" data-testid="select-group-filter">
-            <SelectValue placeholder="All groups" />
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder={t("all_groups")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All groups</SelectItem>
+            <SelectItem value="all">{t("all_groups")}</SelectItem>
             {groups?.map(g => (
               <SelectItem key={g.name} value={g.name}>{g.name} ({g.count})</SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <button onClick={toggleAll} className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto" data-testid="button-toggle-all-wallets">
-          {selected.size === count && count > 0 ? "Deselect all" : "Select all"}
+
+        {selected.size > 0 && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleBulkDelete}
+            disabled={deletingBulk}
+            className="flex items-center gap-2"
+          >
+            {deletingBulk
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Trash2 className="w-4 h-4" />
+            }
+            {t("delete_selected")} ({selected.size})
+          </Button>
+        )}
+
+        <button
+          onClick={toggleAll}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
+        >
+          {selected.size === count && count > 0 ? t("deselect_all") : t("select_all")}
         </button>
       </div>
 
@@ -243,9 +285,9 @@ export default function WalletsPage() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Wallet className="w-14 h-14 text-muted-foreground/20 mb-4" />
-            <h3 className="text-base font-semibold mb-1">No wallets yet</h3>
-            <p className="text-sm text-muted-foreground mb-6">Generate your first wallet to get started</p>
-            <Button onClick={handleGenerate} data-testid="button-generate-first-wallet">Generate Wallet</Button>
+            <h3 className="text-base font-semibold mb-1">{t("no_wallets")}</h3>
+            <p className="text-sm text-muted-foreground mb-6">{t("no_wallets_desc")}</p>
+            <Button onClick={handleGenerate}>{t("generate")}</Button>
           </CardContent>
         </Card>
       )}
@@ -253,27 +295,27 @@ export default function WalletsPage() {
       {/* Import Dialog */}
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Import Wallet</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("import_wallet")}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">Private Key</Label>
-              <Input type="password" placeholder="Base58 encoded private key..." value={importKey} onChange={e => setImportKey(e.target.value)} data-testid="input-private-key" />
+              <Label className="text-xs">{t("private_key_label")}</Label>
+              <Input type="password" placeholder="Base58 encoded private key..." value={importKey} onChange={e => setImportKey(e.target.value)} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">Label (optional)</Label>
+                <Label className="text-xs">{t("label_optional")}</Label>
                 <Input placeholder="Trading wallet" value={importLabel} onChange={e => setImportLabel(e.target.value)} />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">Group (optional)</Label>
+                <Label className="text-xs">{t("group_optional")}</Label>
                 <Input placeholder="Group A" value={importGroup} onChange={e => setImportGroup(e.target.value)} />
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
-            <Button onClick={handleImport} disabled={importWallet.isPending || !importKey} data-testid="button-import-confirm">
-              {importWallet.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Import
+            <Button variant="outline" onClick={() => setImportOpen(false)}>{t("cancel")}</Button>
+            <Button onClick={handleImport} disabled={importWallet.isPending || !importKey}>
+              {importWallet.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} {t("import_confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -282,21 +324,21 @@ export default function WalletsPage() {
       {/* Bulk Generate Dialog */}
       <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Bulk Generate Wallets</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("bulk_generate")}</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">Number of Wallets</Label>
-              <Input type="number" min="1" max="50" value={bulkCount} onChange={e => setBulkCount(parseInt(e.target.value) || 1)} data-testid="input-bulk-count" />
+              <Label className="text-xs">{t("num_wallets")}</Label>
+              <Input type="number" min="1" max="50" value={bulkCount} onChange={e => setBulkCount(parseInt(e.target.value) || 1)} />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Group (optional)</Label>
+              <Label className="text-xs">{t("group_optional")}</Label>
               <Input placeholder="Bundle Group A" value={bulkGroup} onChange={e => setBulkGroup(e.target.value)} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkOpen(false)}>Cancel</Button>
-            <Button onClick={handleBulkGenerate} disabled={generateBulk.isPending} data-testid="button-bulk-generate-confirm">
-              {generateBulk.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Generate {bulkCount} Wallets
+            <Button variant="outline" onClick={() => setBulkOpen(false)}>{t("cancel")}</Button>
+            <Button onClick={handleBulkGenerate} disabled={generateBulk.isPending}>
+              {generateBulk.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} {t("bulk_generate_confirm")} {bulkCount}
             </Button>
           </DialogFooter>
         </DialogContent>
