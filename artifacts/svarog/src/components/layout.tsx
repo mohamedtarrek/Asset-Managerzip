@@ -21,7 +21,9 @@ import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useQuery } from "@tanstack/react-query";
 import { useGetDashboardStats, getGetDashboardStatsQueryKey } from "@workspace/api-client-react";
+import { RPC_ENDPOINTS } from "@/lib/wallet-context";
 
 function truncateAddress(addr: string) {
   if (addr.length <= 12) return addr;
@@ -50,6 +52,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { walletAddress: walletAddress ?? undefined },
     { query: { enabled: !!walletAddress, queryKey: getGetDashboardStatsQueryKey({ walletAddress: walletAddress ?? undefined }) } }
   );
+
+  const { data: ownerBalance } = useQuery({
+    queryKey: ["owner-balance", walletAddress, network],
+    enabled: !!walletAddress,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const rpcUrl = RPC_ENDPOINTS[network];
+      const resp = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [walletAddress] }),
+      });
+      const json = await resp.json() as { result?: { value: number } };
+      const lamports = json.result?.value ?? 0;
+      const sol = lamports / 1_000_000_000;
+      return { sol, usd: sol * 142.8 };
+    },
+  });
 
   const handleConnectClick = async () => {
     if (hasPhantom) {
@@ -171,15 +191,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <div className={cn("flex items-center gap-2", isRTL ? "flex-row-reverse" : "")}>
-            {/* Balance */}
-            {stats && walletAddress && (
+            {/* Balance — live on-chain balance of the connected wallet */}
+            {walletAddress && (
               <div className="hidden md:flex items-center gap-3 text-sm">
                 <span className="text-muted-foreground">{t("balance")}:</span>
                 <span className="font-mono text-foreground font-semibold">
-                  {stats.totalBalanceSol?.toFixed(4) ?? "0.0000"} SOL
+                  {ownerBalance ? ownerBalance.sol.toFixed(4) : "—"} SOL
                 </span>
                 <span className="text-muted-foreground/60">
-                  ${stats.totalBalanceUsd?.toFixed(2) ?? "0.00"}
+                  ${ownerBalance ? ownerBalance.usd.toFixed(2) : "—"}
                 </span>
               </div>
             )}
