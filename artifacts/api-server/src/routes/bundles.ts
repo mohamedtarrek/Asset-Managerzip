@@ -2,8 +2,8 @@ import { Router } from "express";
 import type { IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
 import { db, bundlesTable, activityTable, walletsTable, settingsTable } from "@workspace/db";
-import { Keypair } from "@solana/web3.js";
-import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt } from "../lib/solana.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
+import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt, airdropIfDevnet } from "../lib/solana.js";
 import {
   ListBundlesQueryParams,
   CreateBundleBody,
@@ -109,6 +109,12 @@ router.post("/bundles", async (req, res): Promise<void> => {
   // Execute asynchronously
   (async () => {
     try {
+      // On devnet: fund all participating wallets so transactions don't fail
+      await airdropIfDevnet(rpcEndpoint, [
+        creatorKeypair.publicKey,
+        ...bundleWallets.map((w) => new PublicKey(w.publicKey)),
+      ]);
+
       // Fetch image and convert to Blob
       const imageBlob = await urlToBlob(tokenImageUrl);
 
@@ -231,6 +237,12 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
 
   (async () => {
     try {
+      // On devnet: fund all participating wallets so transactions don't fail
+      await airdropIfDevnet(vampRpc, [
+        creatorKeypair.publicKey,
+        ...wallets.slice(1).map((w) => new PublicKey(w.publicKey)),
+      ]);
+
       const imageBlob = await urlToBlob(imageUrl);
       const createResult = await sdk.createAndBuy(
         creatorKeypair,

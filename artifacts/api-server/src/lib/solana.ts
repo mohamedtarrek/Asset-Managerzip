@@ -83,3 +83,27 @@ export async function urlToBlob(url: string): Promise<Blob> {
 export function lamportsToBigInt(sol: number): bigint {
   return BigInt(Math.floor(sol * LAMPORTS_PER_SOL));
 }
+
+/**
+ * On devnet endpoints, airdrop 2 SOL to each supplied public key and wait for
+ * confirmation. Errors are swallowed so a rate-limit doesn't abort the launch.
+ * No-op on mainnet/testnet.
+ */
+export async function airdropIfDevnet(
+  rpcEndpoint: string | null | undefined,
+  publicKeys: PublicKey[],
+): Promise<void> {
+  if (!rpcEndpoint?.includes("devnet")) return;
+  const connection = getConnection(rpcEndpoint);
+  for (const key of publicKeys) {
+    try {
+      const sig = await connection.requestAirdrop(key, 2 * LAMPORTS_PER_SOL);
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    } catch {
+      // Non-fatal — devnet rate-limits are common; proceed anyway
+    }
+    // Small gap to reduce the chance of hitting rate limits back-to-back
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
