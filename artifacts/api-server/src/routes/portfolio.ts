@@ -1,7 +1,9 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, getAccount } from "@solana/spl-token";
+import { eq, and } from "drizzle-orm";
+import { db, bundlesTable, bundleWalletsTable } from "@workspace/db";
 import { getConnection } from "../lib/solana.js";
 
 const router: IRouter = Router();
@@ -95,6 +97,103 @@ router.get("/portfolio", async (req, res): Promise<void> => {
     res.json({ solBalance, tokens, network: network ?? "mainnet" });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to fetch portfolio" });
+  }
+});
+
+// GET /portfolio/bundle-holdings?ownerAddress=...&network=...
+// Returns live token balances held across all bundle wallets for this owner
+router.get("/portfolio/bundle-holdings", async (req, res): Promise<void> => {
+  const { ownerAddress, network } = req.query as { ownerAddress?: string; network?: string };
+
+  if (!ownerAddress || ownerAddress.length < 32) {
+    res.status(400).json({ error: "ownerAddress is required" });
+    return;
+  }
+
+  const rpc =
+    network === "devnet"
+      ? "https://api.devnet.solana.com"
+      : "https://api.mainnet-beta.solana.com";
+  const connection = getConnection(rpc);
+
+  try {
+    const bundles = await db
+      .select()
+      .from(bundlesTable)
+      .where(
+        and(
+          eq(bundlesTable.ownerAddress, ownerAddress),
+          eq(bundlesTable.network, network === "devnet" ? "devnet" : "mainnet")
+        )
+      );
+
+    const bundlesWithTokens = bundles.filter((b) => b.tokenAddress && b.status !== "failed");
+
+    const results = await Promise.all(
+      bundlesWithTokens.map(async (bundle) => {
+        try {
+          const walletRows = await db
+            .select()
+            .from(bundleWalletsTable)
+            .where(eq(bundleWalletsTable.bundleId, bundle.id));
+
+          if (walletRows.length === 0) return null;
+
+          const mintPubkey = new PublicKey(bundle.tokenAddress!);
+          const TOKEN_DECIMALS = 6;
+
+          const walletBalances = await Promise.all(
+            walletRows.map(async (w) => {
+              const pubkey = new PublicKey(w.walletPublicKey);
+              const [solLamports, tokenBalance] = await Promise.all([
+                connection.getBalance(pubkey).catch(() => 0),
+                (async () => {
+                  try {
+                    const ata = getAssociatedTokenAddressSync(mintPubkey, pubkey);
+                    const account = await getAccount(connection, ata);
+                    return Number(account.amount) / 10 ** TOKEN_DECIMALS;
+                  } catch {
+                    return 0;
+                  }
+                })(),
+              ]);
+              return {
+                walletPublicKey: w.walletPublicKey,
+                isCreator: w.isCreator,
+                soldAt: w.soldAt,
+                solBalance: solLamports / LAMPORTS_PER_SOL,
+                tokenBalance,
+              };
+            })
+          );
+
+          const totalTokenBalance = walletBalances.reduce((s, w) => s + w.tokenBalance, 0);
+          const totalSolBalance = walletBalances.reduce((s, w) => s + w.solBalance, 0);
+          const unsoldWallets = walletBalances.filter((w) => !w.soldAt && !w.isCreator);
+
+          return {
+            bundleId: bundle.id,
+            tokenName: bundle.tokenName,
+            tokenSymbol: bundle.tokenSymbol,
+            tokenAddress: bundle.tokenAddress,
+            status: bundle.status,
+            network: bundle.network,
+            totalTokenBalance,
+            totalSolBalance,
+            unsoldWalletCount: unsoldWallets.length,
+            wallets: walletBalances,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    res.json(results.filter((r) => r !== null && r.totalTokenBalance > 0));
+  } catch (err) {
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Failed to fetch bundle holdings",
+    });
   }
 });
 
