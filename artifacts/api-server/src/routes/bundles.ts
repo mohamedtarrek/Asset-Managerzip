@@ -2,8 +2,8 @@ import { Router } from "express";
 import type { IRouter } from "express";
 import { eq, and, sql } from "drizzle-orm";
 import { db, bundlesTable, activityTable, walletsTable, settingsTable } from "@workspace/db";
-import { Keypair, PublicKey } from "@solana/web3.js";
-import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt, airdropIfDevnet } from "../lib/solana.js";
+import { Keypair } from "@solana/web3.js";
+import { getPumpFunSDK, keypairFromEncrypted, urlToBlob, lamportsToBigInt } from "../lib/solana.js";
 import {
   ListBundlesQueryParams,
   CreateBundleBody,
@@ -109,16 +109,28 @@ router.post("/bundles", async (req, res): Promise<void> => {
   // Execute asynchronously
   (async () => {
     try {
-      // On devnet: fund all participating wallets so transactions don't fail
-      await airdropIfDevnet(rpcEndpoint, [
-        creatorKeypair.publicKey,
-        ...bundleWallets.map((w) => new PublicKey(w.publicKey)),
-      ]);
+      const isDevnet = !!(rpcEndpoint?.includes("devnet"));
 
-      // Fetch image and convert to Blob
+      if (isDevnet) {
+        // Pump.fun is mainnet-only — simulate the launch on devnet
+        await new Promise((r) => setTimeout(r, 1000 + walletCount * 150));
+        const mockSig = `devnet_sim_${mintKeypair.publicKey.toString().slice(0, 12)}_${Date.now()}`;
+        await db.update(bundlesTable).set({ status: "active", txHash: mockSig }).where(eq(bundlesTable.id, bundle.id));
+        await db.insert(activityTable).values({
+          ownerAddress,
+          type: "bundle_launch",
+          description: `[DEVNET SIM] Launched ${tokenName} (${tokenSymbol}) with ${walletCount} wallets`,
+          tokenName,
+          tokenSymbol,
+          amount: sol * walletCount,
+          txHash: mockSig,
+        });
+        return;
+      }
+
+      // Mainnet: real Pump.Fun launch
       const imageBlob = await urlToBlob(tokenImageUrl);
 
-      // Create token + creator buy
       const createResult = await sdk.createAndBuy(
         creatorKeypair,
         mintKeypair,
@@ -237,12 +249,26 @@ router.post("/bundles/vamp", async (req, res): Promise<void> => {
 
   (async () => {
     try {
-      // On devnet: fund all participating wallets so transactions don't fail
-      await airdropIfDevnet(vampRpc, [
-        creatorKeypair.publicKey,
-        ...wallets.slice(1).map((w) => new PublicKey(w.publicKey)),
-      ]);
+      const isDevnet = !!(vampRpc?.includes("devnet"));
 
+      if (isDevnet) {
+        // Pump.fun is mainnet-only — simulate the launch on devnet
+        await new Promise((r) => setTimeout(r, 1000 + walletCount * 150));
+        const mockSig = `devnet_sim_${mintKeypair.publicKey.toString().slice(0, 12)}_${Date.now()}`;
+        await db.update(bundlesTable).set({ status: "active", txHash: mockSig }).where(eq(bundlesTable.id, bundle.id));
+        await db.insert(activityTable).values({
+          ownerAddress,
+          type: "vamp_launch",
+          description: `[DEVNET SIM] VAMP'd ${tokenName} (${tokenSymbol}) from ${sourceTokenAddress.slice(0, 8)}... with ${walletCount} wallets`,
+          tokenName,
+          tokenSymbol,
+          amount: sol * walletCount,
+          txHash: mockSig,
+        });
+        return;
+      }
+
+      // Mainnet: real Pump.Fun launch
       const imageBlob = await urlToBlob(imageUrl);
       const createResult = await sdk.createAndBuy(
         creatorKeypair,
