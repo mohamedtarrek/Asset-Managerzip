@@ -122,14 +122,20 @@ async function signAndSend(txData: {
   }
 }
 
-async function bundleSell(bundleId: number, recipientAddress: string, network: string, walletPublicKey?: string): Promise<{ sold: { walletPublicKey: string; solAmount: number; txHash: string }[]; failed: { walletPublicKey: string; error: string }[] }> {
+async function bundleSell(
+  bundleId: number,
+  recipientAddress: string,
+  network: string,
+  opts?: { walletPublicKey?: string; includeCreator?: boolean }
+): Promise<{ sold: { walletPublicKey: string; solAmount: number; txHash: string }[]; failed: { walletPublicKey: string; error: string }[] }> {
   const rpcEndpoint = network === "devnet" ? "https://api.devnet.solana.com" : undefined;
   const resp = await fetch(`${BASE_URL}api/bundles/${bundleId}/sell`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       recipientAddress,
-      ...(walletPublicKey ? { walletPublicKey } : {}),
+      ...(opts?.walletPublicKey ? { walletPublicKey: opts.walletPublicKey } : {}),
+      ...(opts?.includeCreator ? { includeCreator: true } : {}),
       ...(rpcEndpoint ? { rpcEndpoint } : {}),
     }),
   });
@@ -294,7 +300,7 @@ function BundleHoldingRow({
   const handleSellOne = async (walletPublicKey: string) => {
     setSellingWallet(walletPublicKey);
     try {
-      const result = await bundleSell(holding.bundleId, walletAddress, network, walletPublicKey);
+      const result = await bundleSell(holding.bundleId, walletAddress, network, { walletPublicKey });
       if (result.sold.length > 0) {
         toast({ title: `Sold — ${result.sold[0].solAmount.toFixed(4)} SOL returned` });
         onSold();
@@ -308,7 +314,31 @@ function BundleHoldingRow({
     }
   };
 
+  const [sellingCreator, setSellingCreator] = useState(false);
+
+  const handleSellCreator = async () => {
+    setSellingCreator(true);
+    try {
+      const result = await bundleSell(holding.bundleId, walletAddress, network, {
+        walletPublicKey: creatorWallet!.walletPublicKey,
+      });
+      if (result.sold.length > 0) {
+        const solAmount = result.sold[0].solAmount;
+        toast({ title: `Creator coins sold — ${solAmount.toFixed(4)} SOL returned` });
+        onSold();
+      } else {
+        toast({ title: result.failed[0]?.error ?? "Creator sell failed", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : "Sell failed", variant: "destructive" });
+    } finally {
+      setSellingCreator(false);
+    }
+  };
+
   const unsoldWallets = holding.wallets.filter((w) => !w.isCreator && !w.soldAt);
+  const creatorWallet = holding.wallets.find((w) => w.isCreator);
+  const creatorHasTokens = creatorWallet && creatorWallet.tokenBalance > 0 && !creatorWallet.soldAt;
 
   return (
     <div className="rounded-lg border border-border bg-card/30 overflow-hidden">
@@ -335,8 +365,13 @@ function BundleHoldingRow({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {unsoldWallets.length > 0 && (
-            <Button size="sm" variant="outline" className="h-7 text-xs border-green-500/30 text-green-400 hover:bg-green-500/10" onClick={handleSellAll} disabled={selling}>
+            <Button size="sm" variant="outline" className="h-7 text-xs border-green-500/30 text-green-400 hover:bg-green-500/10" onClick={handleSellAll} disabled={selling || sellingCreator}>
               {selling ? <Loader2 className="w-3 h-3 animate-spin" /> : <><TrendingDown className="w-3 h-3 mr-1" />Sell All</>}
+            </Button>
+          )}
+          {creatorHasTokens && (
+            <Button size="sm" variant="outline" className="h-7 text-xs border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10" onClick={handleSellCreator} disabled={selling || sellingCreator}>
+              {sellingCreator ? <Loader2 className="w-3 h-3 animate-spin" /> : <><TrendingDown className="w-3 h-3 mr-1" />Sell Creator</>}
             </Button>
           )}
           <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" onClick={() => setExpanded((v) => !v)}>

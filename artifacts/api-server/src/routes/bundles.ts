@@ -436,10 +436,11 @@ router.post("/bundles/:id/sell", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid bundle id" }); return; }
 
-  const { recipientAddress, walletPublicKey, rpcEndpoint: bodyRpc } = req.body as {
+  const { recipientAddress, walletPublicKey, rpcEndpoint: bodyRpc, includeCreator } = req.body as {
     recipientAddress: string;
     walletPublicKey?: string;
     rpcEndpoint?: string;
+    includeCreator?: boolean;
   };
   if (!recipientAddress || typeof recipientAddress !== "string" || recipientAddress.length < 32) {
     res.status(400).json({ error: "recipientAddress is required" });
@@ -461,7 +462,11 @@ router.post("/bundles/:id/sell", async (req, res): Promise<void> => {
   const creatorRow = bundleWalletRows.find(w => w.isCreator);
 
   if (walletPublicKey) {
-    bundleWalletRows = bundleWalletRows.filter(w => w.walletPublicKey === walletPublicKey && !w.isCreator);
+    bundleWalletRows = bundleWalletRows.filter(
+      w => w.walletPublicKey === walletPublicKey && !w.soldAt
+    );
+  } else if (includeCreator) {
+    bundleWalletRows = bundleWalletRows.filter(w => !w.soldAt);
   } else {
     bundleWalletRows = bundleWalletRows.filter(w => !w.isCreator && !w.soldAt);
   }

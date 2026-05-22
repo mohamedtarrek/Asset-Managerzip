@@ -6,6 +6,7 @@ import botsRouter from "./bots";
 import dashboardRouter from "./dashboard";
 import tokensRouter from "./tokens";
 import portfolioRouter from "./portfolio";
+import githubRouter from "./github";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(botsRouter);
 router.use(dashboardRouter);
 router.use(tokensRouter);
 router.use(portfolioRouter);
+router.use(githubRouter);
 
 export default router;

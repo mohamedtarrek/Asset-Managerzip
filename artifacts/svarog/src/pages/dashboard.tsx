@@ -1,10 +1,16 @@
-import { TrendingUp, TrendingDown, Rocket, Wallet, Bot, DollarSign, Activity, ArrowUpRight } from "lucide-react";
+import { useState } from "react";
+import { TrendingUp, TrendingDown, Rocket, Wallet, Bot, DollarSign, Activity, ArrowUpRight, Github, Loader2, CheckCircle, XCircle, ExternalLink } from "lucide-react";
 import { useWallet } from "@/lib/wallet-context";
 import { useGetDashboardStats, useGetDashboardActivity } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { BASE_URL } from "@/lib/base-url";
+
+const GITHUB_REPO = "https://github.com/mohamedtarrek/Asset-Managerzip";
 
 const COIN_PRICES = [
   { symbol: "BTC", name: "Bitcoin", price: "$67,240", change: "+2.4%" },
@@ -72,6 +78,8 @@ function ActivityItem({ event }: { event: { id: number; type: string; descriptio
   );
 }
 
+type PushResult = { success?: boolean; committed?: boolean; message?: string; output?: string; error?: string; hint?: string; details?: string };
+
 export default function DashboardPage() {
   const { walletAddress } = useWallet();
   const params = walletAddress ? { walletAddress } : {};
@@ -79,18 +87,51 @@ export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useGetDashboardStats(params);
   const { data: activity, isLoading: activityLoading } = useGetDashboardActivity({ ...params, limit: 10 });
 
+  const [showGithub, setShowGithub] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<PushResult | null>(null);
+
+  const handleGithubPush = async () => {
+    setPushing(true);
+    setPushResult(null);
+    try {
+      const resp = await fetch(`${BASE_URL}api/github/push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repoUrl: GITHUB_REPO }),
+      });
+      const data: PushResult = await resp.json();
+      setPushResult(data);
+    } catch {
+      setPushResult({ error: "Network error — could not reach server" });
+    } finally {
+      setPushing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-sm text-muted-foreground">Your trading overview</p>
         </div>
-        {!walletAddress && (
-          <Badge variant="outline" className="text-yellow-400 border-yellow-400/30 bg-yellow-400/5">
-            Connect wallet to see your stats
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {!walletAddress && (
+            <Badge variant="outline" className="text-yellow-400 border-yellow-400/30 bg-yellow-400/5">
+              Connect wallet to see your stats
+            </Badge>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => { setShowGithub(true); setPushResult(null); }}
+            className="border-gray-600/50 text-gray-300 hover:bg-gray-700/30 hover:text-white gap-2"
+          >
+            <Github className="w-4 h-4" />
+            Push to GitHub
+          </Button>
+        </div>
       </div>
 
       {/* Stats grid */}
@@ -198,6 +239,77 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* GitHub Push Dialog */}
+      <Dialog open={showGithub} onOpenChange={setShowGithub}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Github className="w-5 h-5" />
+              Push to GitHub
+            </DialogTitle>
+            <DialogDescription>
+              Commit all current changes and push them to your repository.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-1">
+            <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 flex items-center gap-3">
+              <Github className="w-4 h-4 text-muted-foreground shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground">Target repository</p>
+                <a href={GITHUB_REPO} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-foreground hover:underline flex items-center gap-1">
+                  mohamedtarrek/Asset-Managerzip
+                  <ExternalLink className="w-3 h-3 text-muted-foreground" />
+                </a>
+              </div>
+            </div>
+
+            {!pushResult && (
+              <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-xs text-yellow-300/80 space-y-1">
+                <p className="font-medium text-yellow-300">Before pushing:</p>
+                <p>Make sure <span className="font-mono">GITHUB_TOKEN</span> is set in your project secrets with <span className="font-mono">repo</span> scope.</p>
+                <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener noreferrer" className="underline text-yellow-200">Generate a token →</a>
+              </div>
+            )}
+
+            {pushResult && (
+              <div className={cn(
+                "rounded-lg border px-4 py-3 text-sm space-y-1",
+                pushResult.success
+                  ? "border-green-500/30 bg-green-500/5 text-green-300"
+                  : "border-red-500/30 bg-red-500/5 text-red-300"
+              )}>
+                <div className="flex items-center gap-2 font-medium">
+                  {pushResult.success
+                    ? <CheckCircle className="w-4 h-4" />
+                    : <XCircle className="w-4 h-4" />}
+                  {pushResult.success ? (pushResult.committed ? "Pushed successfully" : "Already up to date") : "Push failed"}
+                </div>
+                {pushResult.message && <p className="text-xs opacity-80">{pushResult.message}</p>}
+                {pushResult.output && <p className="text-xs font-mono opacity-70 break-all">{pushResult.output}</p>}
+                {pushResult.error && <p className="text-xs opacity-90">{pushResult.error}</p>}
+                {pushResult.hint && <p className="text-xs opacity-70 mt-1">{pushResult.hint}</p>}
+                {pushResult.details && <p className="text-xs font-mono opacity-60 break-all mt-1">{pushResult.details}</p>}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setShowGithub(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={handleGithubPush}
+                disabled={pushing}
+                className="bg-gray-700 hover:bg-gray-600 text-white gap-2"
+              >
+                {pushing
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Pushing...</>
+                  : <><Github className="w-4 h-4" />Push Now</>}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
