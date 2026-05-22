@@ -34,7 +34,7 @@ import {
 } from "@solana/spl-token";
 import BN from "bn.js";
 import { Raydium, TxVersion } from "@raydium-io/raydium-sdk-v2";
-import { keypairFromEncrypted, getConnection } from "./solana.js";
+import { keypairFromEncrypted, getConnection, airdropIfDevnet } from "./solana.js";
 
 // ── Devnet program IDs ───────────────────────────────────────────────────────
 export const DEVNET_OPENBOOK    = new PublicKey("EoTcMgcDRTJVZDMZWBoU6rhYHZfkNTVAXr5sCS76takq");
@@ -74,15 +74,11 @@ function computeVaultSigner(marketId: PublicKey, dexProgram: PublicKey): PublicK
 }
 
 // ── Helper: top up creator SOL on devnet (market + pool creation costs ~4 SOL)
-async function topUpCreatorSol(connection: Connection, payer: Keypair): Promise<void> {
-  for (let i = 0; i < 2; i++) {
-    try {
-      const sig = await connection.requestAirdrop(payer.publicKey, 2 * LAMPORTS_PER_SOL);
-      const bh  = await connection.getLatestBlockhash();
-      await connection.confirmTransaction({ signature: sig, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight });
-      await new Promise(r => setTimeout(r, 800));
-    } catch { /* rate-limit is common on devnet — proceed anyway */ }
-  }
+// Delegates to the shared airdropIfDevnet helper which includes retry + balance check.
+async function topUpCreatorSol(rpcEndpoint: string, payer: Keypair): Promise<void> {
+  await airdropIfDevnet(rpcEndpoint, [payer.publicKey], 2, 4);
+  // Second airdrop attempt for extra headroom (market + pool costs ~4 SOL total)
+  await airdropIfDevnet(rpcEndpoint, [payer.publicKey], 2, 3).catch(() => {/* already have some SOL */});
 }
 
 // ── Main export ──────────────────────────────────────────────────────────────
@@ -108,7 +104,18 @@ export async function launchDevnetBundle(params: {
 
   // ── 0. Ensure creator has enough SOL ──────────────────────────────────────
   log("[DEVNET] Topping up creator SOL for market + pool creation...");
-  await topUpCreatorSol(connection, creatorKeypair);
+  await topUpCreatorSol(rpcEndpoint, creatorKeypair);
+
+  // ── 0b. Ensure bundle wallets have enough SOL (ATA rent + solPerWallet + fees)
+  if (bundleWallets.length > 0) {
+    log(`[DEVNET] Airdropping SOL to ${bundleWallets.length} bundle wallet(s)...`);
+    const neededSol = Math.max(2, solPerWallet + 0.1); // ATA rent + buy amount + fees
+    const bundleKeys = bundleWallets.map(w => {
+      try { return keypairFromEncrypted(w.encryptedPrivateKey).publicKey; }
+      catch { return creatorKeypair.publicKey; }
+    });
+    await airdropIfDevnet(rpcEndpoint, bundleKeys, neededSol, 4);
+  }
 
   // ── 1. Create SPL token mint ───────────────────────────────────────────────
   log(`[DEVNET] Creating SPL token mint (${TOKEN_DECIMALS} decimals)...`);
@@ -225,19 +232,26 @@ export async function launchDevnetBundle(params: {
       // Buyer sends SOL to creator to represent the buy
       const buySolLamports = Math.floor(solPerWallet * LAMPORTS_PER_SOL);
       if (buySolLamports > 0) {
-        const solSig = await sendAndConfirmTransaction(
-          connection,
-          new Transaction().add(
-            SystemProgram.transfer({
-              fromPubkey: buyerKeypair.publicKey,
-              toPubkey:   creatorKeypair.publicKey,
-              lamports:   buySolLamports,
-            }),
-          ),
-          [buyerKeypair],
-          { commitment: "confirmed" },
-        );
-        txHashes.push(solSig);
+        // Guard: ensure buyer actually has enough SOL (airdrop can be rate-limited)
+        const buyerBalance = await connection.getBalance(buyerKeypair.publicKey);
+        const minRequired  = buySolLamports + 10_000; // buy amount + tx fee buffer
+        if (buyerBalance < minRequired) {
+          log(`[DEVNET] Bundle wallet ${w.publicKey.slice(0, 8)}... has insufficient SOL (${buyerBalance / LAMPORTS_PER_SOL} SOL), skipping SOL transfer`);
+        } else {
+          const solSig = await sendAndConfirmTransaction(
+            connection,
+            new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: buyerKeypair.publicKey,
+                toPubkey:   creatorKeypair.publicKey,
+                lamports:   buySolLamports,
+              }),
+            ),
+            [buyerKeypair],
+            { commitment: "confirmed" },
+          );
+          txHashes.push(solSig);
+        }
       }
 
       log(`[DEVNET] Bundle buy: ${w.publicKey.slice(0, 8)}... received ${(perWallet / 10 ** TOKEN_DECIMALS).toLocaleString()} ${tokenSymbol}`);

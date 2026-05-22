@@ -85,25 +85,48 @@ export function lamportsToBigInt(sol: number): bigint {
 }
 
 /**
- * On devnet endpoints, airdrop 2 SOL to each supplied public key and wait for
- * confirmation. Errors are swallowed so a rate-limit doesn't abort the launch.
+ * On devnet endpoints, airdrop SOL to each supplied public key and wait for
+ * confirmation. Retries up to `retries` times per key with exponential backoff.
+ * Verifies balance after airdrop — throws if a key still has 0 SOL after all
+ * retries (so callers know immediately instead of getting a cryptic tx error).
  * No-op on mainnet/testnet.
  */
 export async function airdropIfDevnet(
   rpcEndpoint: string | null | undefined,
   publicKeys: PublicKey[],
+  amountSol = 2,
+  retries = 4,
 ): Promise<void> {
   if (!rpcEndpoint?.includes("devnet")) return;
   const connection = getConnection(rpcEndpoint);
+  const lamports = amountSol * LAMPORTS_PER_SOL;
+
   for (const key of publicKeys) {
-    try {
-      const sig = await connection.requestAirdrop(key, 2 * LAMPORTS_PER_SOL);
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
-    } catch {
-      // Non-fatal — devnet rate-limits are common; proceed anyway
+    let success = false;
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const sig = await connection.requestAirdrop(key, lamports);
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+        await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+        success = true;
+        break;
+      } catch {
+        // Rate-limit or network hiccup — wait and retry
+        const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
-    // Small gap to reduce the chance of hitting rate limits back-to-back
-    await new Promise((r) => setTimeout(r, 400));
+    if (!success) {
+      // Last-chance balance check: if the wallet already has SOL we can proceed
+      const balance = await connection.getBalance(key).catch(() => 0);
+      if (balance === 0) {
+        throw new Error(
+          `Devnet airdrop failed for ${key.toBase58().slice(0, 8)}... after ${retries} attempts. ` +
+          `The public devnet faucet is rate-limited. Try again in a few minutes or use a private devnet RPC endpoint.`
+        );
+      }
+    }
+    // Small gap between wallets to reduce back-to-back rate limiting
+    await new Promise((r) => setTimeout(r, 600));
   }
 }
